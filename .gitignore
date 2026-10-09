@@ -1,0 +1,16 @@
+# secrets and local data
+.env
+caresync.db
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+
+# generated exports and local theme backups
+cognos_data/
+static/styles.before-bronze.css
+static/styles.bronze.css
+static/styles.original-teal.css
