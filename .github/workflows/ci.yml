@@ -2,7 +2,6 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -16,6 +15,8 @@ concurrency:
 env:
   # The suite runs on synthetic demo data with no cloud services attached.
   DEMO_MODE: "1"
+  # A short watchdog interval lets the workflow suite observe emergency escalation and retries.
+  LIVE_CHECK_SECONDS: "2"
 
 jobs:
   lint:
@@ -58,8 +59,10 @@ jobs:
             sleep 1
           done
           echo "The app did not start"; cat server.log; exit 1
-      - name: Access rules and workflows
+      - name: Access rules and core workflows
         run: python tests/smoke.py http://127.0.0.1:8000
+      - name: Emergency and equipment workflows
+        run: python tests/workflows.py http://127.0.0.1:8000
       - name: Server log
         if: failure()
         run: cat server.log
@@ -74,14 +77,16 @@ jobs:
         run: docker build --tag caresync:ci .
       - name: Start container
         run: |
-          docker run --detach --name caresync --publish 8000:8000 --env DEMO_MODE=1 caresync:ci
+          docker run --detach --name caresync --publish 8000:8000 --env DEMO_MODE=1 --env LIVE_CHECK_SECONDS=2 caresync:ci
           for attempt in $(seq 1 40); do
             if curl --silent --fail http://127.0.0.1:8000/ > /dev/null; then exit 0; fi
             sleep 1
           done
           echo "The container did not start"; docker logs caresync; exit 1
-      - name: Run the suite against the container
-        run: python3 tests/smoke.py http://127.0.0.1:8000
+      - name: Run both suites against the container
+        run: |
+          python3 tests/smoke.py http://127.0.0.1:8000
+          python3 tests/workflows.py http://127.0.0.1:8000
       - name: Container log
         if: failure()
         run: docker logs caresync
