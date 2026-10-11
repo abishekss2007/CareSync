@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "",
+  "outputDirectory": "static",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://caresync-app-r083.onrender.com/api/:path*" },
+    { "source": "/static/:path*", "destination": "/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
