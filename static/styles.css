@@ -588,6 +588,9 @@ html[data-theme="bronze"] .glass { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
 /* ---------- equipment and stores ---------- */
 .modal-card.wide { width: min(980px, 100%); }
 .grid > * { min-width: 0; }
+/* a stacked card must not grow to the width of a wide table inside it; the table scrolls sideways instead */
+.stack { grid-template-columns: minmax(0, 1fr); }
+.stack > * { min-width: 0; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 14px; }
 .filters > input, .filters > select { width: auto; min-width: 120px; flex: 1 1 130px; height: 38px; }
 label.mini { display: grid; gap: 4px; font-size: 12px; color: var(--faint); flex: 0 1 140px; }
