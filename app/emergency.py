@@ -211,7 +211,10 @@ def raise_alert(body: AlertIn, db=Depends(get_db), user=Depends(require(*RAISE))
     arrival = now()
     if body.arrival_at:
         try:
-            arrival = dt.datetime.fromisoformat(body.arrival_at).replace(microsecond=0, tzinfo=None)
+            arrival = dt.datetime.fromisoformat(body.arrival_at)
+            if arrival.tzinfo:  # the browser sends its own offset; store it as server-local time like every other timestamp
+                arrival = arrival.astimezone()
+            arrival = arrival.replace(microsecond=0, tzinfo=None)
         except ValueError:
             raise HTTPException(400, "Arrival time is not valid")
         if arrival > now() + dt.timedelta(minutes=5) or arrival < now() - dt.timedelta(hours=24):

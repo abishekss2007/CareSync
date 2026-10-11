@@ -1690,7 +1690,7 @@ async function erDone(message, id) {
 Object.assign(FORMS, {
   async raiseAlert(data, form) {
     const body = { idem_key: data.idem_key, emergency_type: data.emergency_type, description: data.description, priority: data.priority,
-      location: data.location, team: data.team, arrival_at: data.arrival_at,
+      location: data.location, team: data.team, arrival_at: data.arrival_at ? new Date(data.arrival_at).toISOString() : '',
       assigned_doctor_id: data.assigned_doctor_id ? Number(data.assigned_doctor_id) : null };
     if (form.dataset.mode === 'new') {
       if (!data.np_name || data.np_age === '') throw new Error('Enter a name (or "Unknown") and an approximate age');
