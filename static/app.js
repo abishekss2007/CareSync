@@ -10,7 +10,7 @@ const store = {
 const S = {
   token: store.get('cs_token'), user: null, meta: null, view: 'home', arg: null, seq: 0,
   notif: { unread: 0, items: [] }, lastNotif: null, badges: {}, reqTab: 'inbox', chat: null,
-  staff: [], assignable: [], pq: '', timer: null,
+  staff: [], assignable: [], pq: '', timer: null, stream: null,
 };
 const CACHE = {};
 
@@ -24,22 +24,25 @@ const THEMES = [
   { id: 'renaissance', name: 'Renaissance', light: true, sw: ['#E4D9C7', '#8A5142', '#58705A'] },
   { id: 'wabi', name: 'Japanese wabi-sabi', light: true, sw: ['#DDD8CA', '#596C66', '#8C6752'] },
   { id: 'persian', name: 'Persian terracotta', light: true, sw: ['#DCCDB9', '#426B78', '#3F7E78'] },
-  { id: 'coastal', name: 'Modern coastal stone', light: true, sw: ['#E5E1D8', '#587F82', '#A9824A'] },
+  { id: 'coastal', name: 'Modern coastal stone', light: true, sw: ['#E8E0D3', '#355B5A', '#B7A18A'] },
   { id: 'bronze', name: 'Dark bronze', light: false, sw: ['#202522', '#343A35', '#A87C4F'] },
   { id: 'teal', name: 'Midnight teal', light: false, sw: ['#071221', '#142033', '#5fe3c6'] },
 ];
+/* Modern coastal stone is the default, and the only theme before sign-in. After sign-in a theme the person
+   picked earlier is restored; it is saved only when they choose one themselves. */
+const DEFAULT_THEME = 'coastal';
 function savedTheme() {
   let id = null;
   try { id = localStorage.getItem('cs_theme'); } catch { /* storage blocked */ }
-  return THEMES.some((t) => t.id === id) ? id : 'roman';
+  return THEMES.some((t) => t.id === id) ? id : DEFAULT_THEME;
 }
-function applyTheme(id) {
-  const theme = THEMES.find((t) => t.id === id) || THEMES[0];
+function applyTheme(id, remember = false) {
+  const theme = THEMES.find((t) => t.id === id) || THEMES.find((t) => t.id === DEFAULT_THEME);
   const el = document.documentElement;
   el.dataset.theme = theme.id;
   if (theme.light) el.dataset.light = '1';
   else delete el.dataset.light;
-  try { localStorage.setItem('cs_theme', theme.id); } catch { /* storage blocked */ }
+  if (remember) { try { localStorage.setItem('cs_theme', theme.id); } catch { /* storage blocked */ } }
   S.theme = theme.id;
 }
 const swatch = (t) => `<span class="swatch">${t.sw.map((c) => `<i style="background:${c}"></i>`).join('')}</span>`;
@@ -47,7 +50,6 @@ function renderThemePanel() {
   const panel = $('#themes');
   if (panel) panel.innerHTML = `<h3>Colour theme</h3>${THEMES.map((t) => `<button class="theme-opt${S.theme === t.id ? ' on' : ''}" data-act="setTheme" data-id="${t.id}">${swatch(t)}${esc(t.name)}</button>`).join('')}`;
 }
-const themeDots = () => `<div class="theme-dots"><span>Theme</span>${THEMES.map((t) => `<button class="theme-dot${S.theme === t.id ? ' on' : ''}" data-act="setTheme" data-id="${t.id}" title="${esc(t.name)}" aria-label="${esc(t.name)} theme" style="background:linear-gradient(135deg, ${t.sw[0]} 50%, ${t.sw[1]} 50%)"></button>`).join('')}</div>`;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const initials = (name) => String(name || '?').replace(/^Dr\.\s*/, '').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -86,6 +88,9 @@ const PATHS = {
   download: '<path d="M12 4v11M7.5 11 12 15.5 16.5 11M5 20h14"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12 20 3M16 7l3 3M14 9l2 2"/>',
   idcard: '<rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="11" r="2.2"/><path d="M5.5 16c.6-1.6 1.9-2.4 3.5-2.4s2.9.8 3.5 2.4M15 10h4M15 13.5h3"/>',
+  siren: '<path d="M7 18v-6a5 5 0 0 1 10 0v6"/><path d="M5 21h14v-3H5zM12 3v2M4.2 6.2l1.4 1.4M19.8 6.2l-1.4 1.4"/>',
+  box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+  wrench: '<path d="M14.7 6.3a4 4 0 0 0 5 5l-8.9 8.9a2.1 2.1 0 0 1-3-3l8.9-8.9a4 4 0 0 1-2-2z"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 2-.9 2-2 0-.6-.2-1-.5-1.4-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A3.7 3.7 0 0 0 21 10.6C21 6.4 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/>',
 };
 const ic = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name]}</svg>`;
@@ -121,9 +126,9 @@ function toast(message, isError) {
   setTimeout(() => el.remove(), isError ? 5200 : 3600);
 }
 
-function openModal(html) {
+function openModal(html, wide) {
   const m = $('#modal');
-  m.innerHTML = `<div class="modal-card glass" role="dialog" aria-modal="true">${html}</div>`;
+  m.innerHTML = `<div class="modal-card glass${wide ? ' wide' : ''}" role="dialog" aria-modal="true">${html}</div>`;
   m.hidden = false;
   const first = m.querySelector('input:not([type=hidden]), select, textarea');
   if (first) first.focus();
@@ -136,6 +141,7 @@ function closeModal() {
 /* ---------- sign in ---------- */
 async function renderLogin() {
   let demo = [];
+  applyTheme(DEFAULT_THEME);
   try { demo = await api('/demo/accounts'); } catch { /* demo mode off */ }
   root.innerHTML = `
   <div class="login">
@@ -148,7 +154,6 @@ async function renderLogin() {
         <li>${ic('check')}<span><b>Approvals, tasks and messages</b> between staff, inside the same app.</span></li>
         <li>${ic('check')}<span><b>Role-based access</b> checked on the server, with an audit trail.</span></li>
       </ul>
-      ${themeDots()}
     </section>
     <section class="login-card glass">
       <h2>Sign in</h2>
@@ -178,6 +183,7 @@ async function startSession(data) {
 function signOut(callServer = true) {
   if (callServer && S.token) api('/logout', 'POST').catch(() => {});
   clearInterval(S.timer);
+  stopStream();
   Object.assign(S, { token: null, user: null, view: 'home', arg: null, lastNotif: null, chat: null, badges: {}, reqTab: 'inbox', pq: '', staff: [], assignable: [], notif: { unread: 0, items: [] } });
   store.set('cs_token', null);
   closeModal();
@@ -187,16 +193,20 @@ function signOut(callServer = true) {
 /* ---------- shell and routing ---------- */
 const NAV = {
   patient: ['home'],
-  receptionist: ['home', 'queue', 'patients', 'beds', 'requests', 'tasks', 'messages'],
-  nurse: ['home', 'patients', 'beds', 'requests', 'tasks', 'messages'],
-  doctor: ['home', 'patients', 'requests', 'tasks', 'messages'],
-  dean: ['home', 'analytics', 'queue', 'patients', 'beds', 'staff', 'requests', 'tasks', 'messages'],
-  chairman: ['home', 'analytics', 'queue', 'patients', 'beds', 'staff', 'requests', 'tasks', 'messages', 'admin'],
+  receptionist: ['home', 'emergency', 'queue', 'patients', 'beds', 'requests', 'tasks', 'messages'],
+  nurse: ['home', 'emergency', 'patients', 'beds', 'equipment', 'requests', 'tasks', 'messages'],
+  doctor: ['home', 'emergency', 'patients', 'equipment', 'requests', 'tasks', 'messages'],
+  dean: ['home', 'analytics', 'emergency', 'queue', 'patients', 'beds', 'equipment', 'staff', 'requests', 'tasks', 'messages'],
+  chairman: ['home', 'analytics', 'emergency', 'queue', 'patients', 'beds', 'equipment', 'staff', 'requests', 'tasks', 'messages', 'admin'],
+  admin: ['home', 'emergency', 'queue', 'beds', 'equipment', 'requests', 'tasks', 'messages'],
+  coordinator: ['home', 'requests', 'tasks', 'messages'],
 };
-const HOME_LABEL = { patient: 'My visit', receptionist: 'Front desk', nurse: 'Ward queue', doctor: 'My queue', dean: 'Overview', chairman: 'Overview' };
-const LABEL = { analytics: 'Analytics', queue: 'Live queue', patients: 'Patient records', beds: 'Beds', staff: 'Staff accounts', requests: 'Approvals', tasks: 'Tasks', messages: 'Messages', admin: 'Admin and audit', consult: 'Consultation' };
-const ICON = { home: 'home', analytics: 'chart', queue: 'queue', patients: 'users', beds: 'bed', staff: 'idcard', requests: 'check', tasks: 'list', messages: 'chat', admin: 'shield' };
-const label = (view) => (view === 'home' ? HOME_LABEL[S.user.role] : view === 'requests' && !['doctor', 'dean', 'chairman'].includes(S.user.role) ? 'Requests' : LABEL[view]);
+const HOME_LABEL = { patient: 'My visit', receptionist: 'Front desk', nurse: 'Ward queue', doctor: 'My queue', dean: 'Overview', chairman: 'Overview', admin: 'Operations', coordinator: 'Stores and dispatch' };
+const LABEL = { analytics: 'Analytics', queue: 'Live queue', patients: 'Patient records', beds: 'Beds', staff: 'Staff accounts', requests: 'Approvals', tasks: 'Tasks', messages: 'Messages', admin: 'Admin and audit', consult: 'Consultation', emergency: 'Emergencies', equipment: 'Equipment & supplies' };
+const EQUIP_LABEL = { dean: 'Equipment requests', chairman: 'Procurement', admin: 'Procurement' };
+const ICON = { home: 'home', analytics: 'chart', queue: 'queue', patients: 'users', beds: 'bed', staff: 'idcard', requests: 'check', tasks: 'list', messages: 'chat', admin: 'shield', emergency: 'siren', equipment: 'box' };
+const label = (view) => (view === 'home' ? HOME_LABEL[S.user.role] : view === 'equipment' ? EQUIP_LABEL[S.user.role] || LABEL.equipment
+  : view === 'requests' && !['doctor', 'dean', 'chairman'].includes(S.user.role) ? 'Requests' : LABEL[view]);
 
 function renderShell() {
   const u = S.user;
@@ -224,6 +234,7 @@ function renderShell() {
         </div>
         <button class="icon-btn" data-act="signout" aria-label="Sign out" title="Sign out">${ic('logout')}</button>
       </header>
+      <div id="er-banner" class="er-banner" aria-live="assertive"></div>
       <div id="view" class="view"></div>
     </main>
   </div>`;
@@ -241,6 +252,7 @@ function renderNav() {
 }
 
 function go(view, arg = null) {
+  if (S.view === 'consult' && view !== 'consult') saveDraft().catch(() => {});  // keep what the doctor typed
   if (view !== 'consult' && !NAV[S.user.role].includes(view)) view = 'home';
   S.view = view;
   S.arg = arg;
@@ -288,9 +300,10 @@ async function refreshLive(name) {
   el.innerHTML = html;
   if (name === 'thread') scrollChat();
 }
-async function tick() {
-  if (!S.user || document.hidden) return;
+async function tick(force) {
+  if (!S.user || (document.hidden && !force)) return;
   try { await refreshNotifs(); } catch { return; }
+  refreshEmergency().catch(() => {});
   for (const el of document.querySelectorAll('#view [data-live]')) {
     const active = document.activeElement;
     if (active && el.contains(active) && /INPUT|TEXTAREA|SELECT/.test(active.tagName)) continue;
@@ -303,7 +316,10 @@ async function refreshNotifs() {
   if (S.user.role !== 'patient') calls.push(api('/badges'));
   const [n, b] = await Promise.all(calls);
   const newest = n.items[0] ? n.items[0].id : 0;
-  if (S.lastNotif !== null && newest > S.lastNotif && !n.items[0].read) toast(n.items[0].text);
+  if (S.lastNotif !== null && newest > S.lastNotif && !n.items[0].read) {
+    toast(n.items[0].text, n.items[0].kind === 'emergency');
+    if (n.items[0].kind === 'emergency') alarm();
+  }
   S.lastNotif = newest;
   S.notif = n;
   const dot = $('#bell-dot');
@@ -313,13 +329,15 @@ async function refreshNotifs() {
 }
 function renderNotifs() {
   $('#notif').innerHTML = `<h3>Notifications</h3>${S.notif.items.length ? S.notif.items.map((n) => `
-    <button class="${n.read ? '' : 'unread'}" data-act="go" data-view="${esc(n.view || 'home')}">${esc(n.text)}<small>${ago(n.at)}</small></button>`).join('')
+    <button class="${n.read ? '' : 'unread'}${n.kind === 'emergency' ? ' urgent' : ''}" data-act="go" data-view="${esc(n.view || 'home')}" data-ref="${esc(n.ref || '')}">${esc(n.text)}<small>${ago(n.at)}</small></button>`).join('')
     : '<div class="empty">Nothing new</div>'}`;
 }
 
 /* ---------- shared pieces ---------- */
 const STATUS_PILL = { waiting: ['warn', 'Waiting'], in_consultation: ['good', 'With doctor'], done: ['', 'Completed'] };
 const statusPill = (s) => `<span class="pill ${STATUS_PILL[s][0]}">${STATUS_PILL[s][1]}</span>`;
+const PRIORITY_PILL = { critical: ['bad prio', 'Critical emergency'], urgent: ['warn prio', 'Urgent'] };
+const priorityPill = (p) => (PRIORITY_PILL[p] ? `<span class="pill ${PRIORITY_PILL[p][0]}">${PRIORITY_PILL[p][1]}</span>` : '');
 
 function deptTable(st) {
   return `<div class="scroll-x"><table>
@@ -371,8 +389,8 @@ function bars(rows, nameKey, key, unit) {
     <div class="meter"><i style="width:${Math.round((100 * r[key]) / max)}%"></i></div><span class="v">${r[key]}${unit}</span></div>`).join('')}</div>`;
 }
 function queueItem(v, actions) {
-  return `<div class="item${v.status === 'in_consultation' ? ' hot' : ''}">
-    <div class="item-head"><span class="token">${esc(v.token)}</span>
+  return `<div class="item${v.status === 'in_consultation' ? ' hot' : ''}${v.priority === 'critical' ? ' critical' : v.priority === 'urgent' ? ' urgent' : ''}">
+    <div class="item-head"><span class="token">${esc(v.token)}</span>${priorityPill(v.priority)}
       <span class="grow"><b>${esc(v.patient.name)}</b><div class="meta"><span class="mono">${esc(v.patient.pid)}</span> · ${v.patient.age} y · ${esc(v.patient.gender)}</div></span>
       ${v.referred_from ? `<span class="pill info">From ${esc(v.referred_from)}</span>` : ''}
       ${v.status === 'waiting' ? `<span class="pill warn">Waited ${v.waited} min</span>` : statusPill(v.status)}</div>
@@ -455,7 +473,11 @@ async function fillSlots(form) {
   }
 }
 HOME.receptionist = async () => `
-  <div class="stack"><div class="grid cols-2">
+  <div class="stack">
+    <div class="card glass er-raise"><div class="spread"><div><b style="font-size:16.5px;font-weight:600">Critical emergency arriving?</b>
+      <div class="hint">Raise a Critical Emergency Alert. The emergency team, the assigned doctor, the dean, the chairman and the administrator are alerted at once.</div></div>
+      <button class="btn danger-solid" data-act="raiseAlert">${ic('siren')} Critical Emergency Alert</button></div></div>
+    <div class="grid cols-2">
     <div class="card glass"><div class="card-head"><h2>Register a new patient</h2></div>
       <form class="form" data-form="register">
         <label class="field">Full name<input name="name" required minlength="2" maxlength="120"></label>
@@ -468,6 +490,7 @@ HOME.receptionist = async () => `
           <label class="field">Phone<input name="phone" maxlength="20" inputmode="tel"></label>
           <label class="field">Known allergies<input name="allergies" maxlength="240" placeholder="Leave empty if none"></label>
         </div>
+        ${priorityField()}
         <button class="btn primary" type="submit">Register and create patient ID</button>
       </form></div>
     <div class="card glass"><div class="card-head"><h2>Issue a queue token</h2></div>
@@ -475,6 +498,7 @@ HOME.receptionist = async () => `
         <label class="field">Patient${picker('Search by name or patient ID')}</label>
         <label class="field">Department<select name="department">${S.meta.departments.map((d) => `<option>${esc(d)}</option>`).join('')}</select></label>
         <label class="field">Reason for visit<input name="complaint" maxlength="240" placeholder="Short description"></label>
+        ${priorityField()}
         <div class="row"><button type="button" class="btn small" data-act="suggestDept">${ic('spark')} Suggest department</button><span class="hint" id="triage-hint"></span></div>
         <button class="btn primary" type="submit">Issue token</button>
       </form></div>
@@ -549,6 +573,7 @@ const medRow = () => `<div class="med-row"><input name="med" placeholder="Medici
 
 VIEW.consult = async () => {
   const visit = await api('/visits/' + S.arg);
+  S.draft = visit.draft || '';
   const rec = await api('/patients/' + encodeURIComponent(visit.patient.pid));
   const p = rec.patient;
   const history = rec.visits.filter((v) => v.id !== visit.id && v.status === 'done');
@@ -577,6 +602,7 @@ VIEW.consult = async () => {
         <label class="field">Reason for referral<input name="refer_reason" maxlength="200" placeholder="Shown to the next doctor"></label>
         <button class="btn primary" type="submit">Save and close visit</button>
         <button class="btn" type="button" data-act="go" data-view="home">Back to queue</button>
+        <span class="hint" id="draft-state">${visit.draft ? 'Draft restored. It is saved as you type.' : 'Your notes are saved as a draft as you type.'}</span>
       </form></div></div>
   </div>`;
 };
@@ -587,8 +613,8 @@ LIVE.queueAll = async () => {
   return `<div class="grid cols-3">${S.meta.departments.map((d) => {
     const rows = q.visits.filter((v) => v.department === d);
     return `<div class="card glass"><div class="card-head"><h2>${esc(d)}</h2><span class="grow"></span><span class="pill plain">${rows.length}</span></div>
-      ${rows.length ? `<div class="list">${rows.map((v) => `<div class="item${v.status === 'in_consultation' ? ' hot' : ''}"><div class="item-head">
-        <span class="token">${esc(v.token)}</span><span class="grow"><b>${esc(v.patient.name)}</b></span></div>
+      ${rows.length ? `<div class="list">${rows.map((v) => `<div class="item${v.status === 'in_consultation' ? ' hot' : ''}${v.priority === 'critical' ? ' critical' : ''}"><div class="item-head">
+        <span class="token">${esc(v.token)}</span><span class="grow"><b>${esc(v.patient.name)}</b></span>${priorityPill(v.priority)}</div>
         <div class="meta">${v.status === 'waiting' ? `Waited ${v.waited} min · ${v.est_wait ? 'about ' + v.est_wait + ' min to go' : 'next in line'}` : 'With ' + esc(v.doctor)}</div></div>`).join('')}</div>`
         : '<div class="empty">No one waiting</div>'}</div>`;
   }).join('')}</div>`;
@@ -829,11 +855,11 @@ const ACT = {
     if (!panel.hidden) renderThemePanel();
   },
   setTheme(d) {
-    applyTheme(d.id);
+    applyTheme(d.id, true);
     renderThemePanel();
     document.querySelectorAll('.theme-dot').forEach((b) => b.classList.toggle('on', b.dataset.id === d.id));
   },
-  go(d) { closeModal(); go(d.view); },
+  go(d) { closeModal(); go(d.view, d.ref ? (/^\d+$/.test(d.ref) ? Number(d.ref) : null) : null); },
   close() { closeModal(); },
   async bell() {
     const panel = $('#notif');
@@ -859,6 +885,7 @@ const ACT = {
     if (!form) return;
     $('[name=pid]', form).value = d.pid;
     $('[data-q]', form).value = `${d.name} · ${d.pid}`;
+    if (d.priority) $('[name=priority]', form).value = d.priority;
     $('[name=department]', form).focus();
   },
   vitals(d) {
@@ -1071,20 +1098,25 @@ const pidFrom = (data, form) => (data.pid || ($('[data-q]', form).value.match(/C
 const FORMS = {
   async login(data) { await startSession(await api('/login', 'POST', data)); },
   async register(data, form) {
-    const out = await api('/patients', 'POST', { ...data, age: Number(data.age) });
+    const { priority, ...fields } = data;
+    const out = await api('/patients', 'POST', { ...fields, age: Number(fields.age) });
     form.reset();
     const p = out.patient;
+    if (priority === 'critical') return ACT.raiseAlert({ pid: p.pid, name: p.name, pin: out.pin });
     openModal(`<h2>Patient registered</h2><p class="sub">Give ${esc(p.name)} this ID and PIN. The PIN is shown only once.</p>
       <div class="credential"><div><span>Patient ID</span><b>${esc(p.pid)}</b></div><div><span>PIN</span><b>${esc(out.pin)}</b></div></div>
       <div class="modal-actions"><button class="btn" data-act="close">Done</button>
-        <button class="btn primary" data-act="prefillToken" data-pid="${esc(p.pid)}" data-name="${esc(p.name)}">Issue a token now</button></div>`);
+        <button class="btn primary" data-act="prefillToken" data-pid="${esc(p.pid)}" data-name="${esc(p.name)}" data-priority="${esc(priority || 'normal')}">Issue a token now</button></div>`);
   },
   async token(data, form) {
     const pid = pidFrom(data, form);
     if (!pid) throw new Error('Choose a patient from the search results');
-    const out = await api('/visits', 'POST', { pid, department: data.department, complaint: data.complaint });
+    if (data.priority === 'critical') {
+      return ACT.raiseAlert({ pid, name: $('[data-q]', form).value.split(' · ')[0], complaint: data.complaint, team: data.department });
+    }
+    const out = await api('/visits', 'POST', { pid, department: data.department, complaint: data.complaint, priority: data.priority });
     form.reset();
-    openModal(`<h2>Token issued</h2><p class="sub">${esc(out.patient.name)} · ${esc(out.department)}</p>
+    openModal(`<h2>Token issued</h2><p class="sub">${esc(out.patient.name)} · ${esc(out.department)}${out.priority === 'urgent' ? ' · <b>Urgent</b>' : ''}</p>
       <div class="credential"><div><span>Token</span><b>${esc(out.token)}</b></div>
         <div><span>Estimated wait</span><b>${out.est_wait ? '~' + out.est_wait + ' min' : 'No wait'}</b></div></div>
       <p class="hint">${plural(out.ahead, 'patient')} ahead. The patient can follow their place in the queue from their own login.</p>
@@ -1333,8 +1365,1108 @@ window.addEventListener('scroll', hideTip, { passive: true });
 window.addEventListener('blur', hideTip);
 setInterval(() => { if (tipFor && !tipFor.isConnected) { tipFor = null; tip.hidden = true; } }, 500);
 
+/* ---------- live updates ---------- */
+/* A server-sent event stream tells the app when its notifications, emergencies or equipment data changed.
+   The six-second polling stays on as a fallback, so nothing depends on the stream staying connected. */
+async function startStream() {
+  stopStream();
+  if (!S.token || !window.ReadableStream) return;
+  const ctrl = new AbortController();
+  S.stream = ctrl;
+  let wait = 2000;
+  while (S.stream === ctrl) {
+    try {
+      const res = await fetch('/api/stream', { headers: { Authorization: `Bearer ${S.token}` }, signal: ctrl.signal });
+      if (res.status === 401) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      wait = 2000;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, cut);
+          buf = buf.slice(cut + 2);
+          if (/^event: change/m.test(chunk)) tick(true);
+          if (/^event: bye/m.test(chunk)) return;
+        }
+      }
+    } catch { if (ctrl.signal.aborted) return; }
+    await new Promise((r) => setTimeout(r, wait));
+    wait = Math.min(wait * 2, 30000);
+  }
+}
+function stopStream() {
+  if (S.stream) S.stream.abort();
+  S.stream = null;
+}
+
+/* ---------- emergency alert sound ---------- */
+let audio = null;
+const soundOn = () => { try { return localStorage.getItem('cs_er_sound') !== 'off'; } catch { return true; } };
+document.addEventListener('pointerdown', () => {
+  if (!audio && (window.AudioContext || window.webkitAudioContext)) audio = new (window.AudioContext || window.webkitAudioContext)();
+  if (audio && audio.state === 'suspended') audio.resume();
+}, { capture: true });
+function alarm() {
+  if (!audio || !soundOn() || audio.state !== 'running') return;  // browsers allow sound only after the user has clicked
+  const t0 = audio.currentTime;
+  for (let i = 0; i < 3; i++) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = 'square';
+    osc.frequency.value = i % 2 ? 660 : 880;
+    gain.gain.setValueAtTime(0.0001, t0 + i * 0.32);
+    gain.gain.exponentialRampToValueAtTime(0.12, t0 + i * 0.32 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.32 + 0.26);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t0 + i * 0.32);
+    osc.stop(t0 + i * 0.32 + 0.28);
+  }
+}
+
+/* ---------- emergencies ---------- */
+const ER_ROLES = ['receptionist', 'doctor', 'nurse', 'dean', 'chairman', 'admin'];
+const ER_STATUS_PILL = { alert_created: 'bad', notification_sent: 'bad', acknowledged: 'warn', response_started: 'info',
+  under_care: 'info', transferred: 'good', admitted: 'good', closed: '' };
+const uid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Date.now().toString(36) + Math.random().toString(36).slice(2, 14));
+const erStatus = (a) => `<span class="pill ${ER_STATUS_PILL[a.status]}">${esc(a.status_label)}</span>`;
+const erPrio = (p) => `<span class="pill ${p === 'critical' ? 'bad' : p === 'urgent' ? 'warn' : 'plain'} prio">${p === 'critical' ? 'Critical' : p === 'urgent' ? 'Urgent' : 'Normal'}</span>`;
+const erWho = (a) => (a.restricted ? `<span class="mono">${esc(a.patient.pid)}</span> <span class="faint">(details restricted)</span>`
+  : `<b>${esc(a.patient.name)}</b> <span class="mono faint">${esc(a.patient.pid)}</span>${a.patient.age != null ? ` · ${a.patient.age} y · ${esc(a.patient.gender)}` : ''}`);
+const mins = (n) => (n < 60 ? `${n} min` : `${Math.floor(n / 60)} h ${n % 60} min`);
+S.erSeen = new Set();
+S.erRang = {};
+
+function priorityField() {
+  return `<label class="field">Priority<select name="priority">
+    <option value="normal">Normal</option><option value="urgent">Urgent</option><option value="critical">Critical Emergency</option></select></label>`;
+}
+
+async function refreshEmergency() {
+  const el = $('#er-banner');
+  if (!el || !S.user || !ER_ROLES.includes(S.user.role)) return;
+  const data = await api('/emergencies/active');
+  const now = Date.now();
+  for (const a of data.alerts) {
+    if (!S.erSeen.has(a.id)) {  // the alert is on screen now: record delivery for this person
+      S.erSeen.add(a.id);
+      api(`/emergencies/${a.id}/received`, 'POST').catch(() => S.erSeen.delete(a.id));
+    }
+    if (a.must_ack && (!S.erRang[a.id] || now - S.erRang[a.id] > 30000)) { S.erRang[a.id] = now; alarm(); }
+  }
+  const html = data.alerts.slice(0, 3).map((a) => (a.must_ack ? `
+    <div class="er-alert must" role="alert">
+      <div class="er-head">${ic('siren')}<b>${a.priority === 'critical' ? 'CRITICAL EMERGENCY ALERT' : 'URGENT EMERGENCY ALERT'}</b>
+        <span class="mono">${esc(a.ern)}</span><span class="grow"></span><span>Waiting ${mins(a.elapsed_minutes)}</span></div>
+      <div class="er-body"><div>${erWho(a)}</div>
+        <div>${esc(a.emergency_type)}${a.description ? ' · ' + esc(a.description) : ''}</div>
+        <div class="er-meta">Location <b>${esc(a.location || 'not set')}</b> · Arrived ${fmtTime(a.arrival_at)} · ${esc(a.status_label)}${a.escalation_level ? ` · Escalated (level ${a.escalation_level})` : ''}</div>
+        <div class="er-need">This patient needs immediate clinical attention. Acknowledge to tell the team you are responding.${S.view === 'consult' ? ' Your open consultation and its notes are kept.' : ''}</div></div>
+      <div class="row">
+        <button class="btn er-ack" data-act="erAck" data-id="${a.id}">Acknowledge emergency</button>
+        <button class="btn small" data-act="erView" data-id="${a.id}">View patient</button>
+        <button class="btn small" data-act="erAssign" data-id="${a.id}">Respond / assign backup</button>
+        <button class="link er-sound" data-act="erSound">${soundOn() ? 'Mute sound' : 'Turn sound on'}</button></div>
+    </div>` : `
+    <div class="er-alert" role="status">${ic('siren')}<span class="grow"><b>${a.priority === 'critical' ? 'Critical emergency' : 'Urgent emergency'}</b>
+      <span class="mono">${esc(a.ern)}</span> · ${erWho(a)} · ${esc(a.emergency_type)} · ${esc(a.location || 'location not set')} ·
+      ${esc(a.assigned_doctor || a.team + ' team')} · ${esc(a.status_label)} · ${mins(a.elapsed_minutes)}</span>
+      <button class="btn small" data-act="erView" data-id="${a.id}">View</button>
+      <button class="btn small" data-act="erSeenNow" data-id="${a.id}">Dismiss</button></div>`)).join('')
+    + (data.alerts.length > 3 ? `<button class="link" data-act="go" data-view="emergency">${data.alerts.length - 3} more open emergencies</button>` : '');
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
+LIVE.erBoard = async () => {
+  const tab = S.erTab || 'open';
+  const data = await api('/emergencies?scope=' + (tab === 'open' ? 'open' : 'history'));
+  S.erMeta = data;
+  const tabs = [['open', `Open (${tab === 'open' ? data.alerts.length : '…'})`], ['history', 'Alert history']];
+  if (data.can_report) tabs.push(['report', 'Acknowledgement report']);
+  let body;
+  if (tab === 'report') body = await erReport(data);
+  else {
+    const rows = data.alerts;
+    body = rows.length ? `<div class="list">${rows.map((a) => `<div class="item${a.priority === 'critical' && a.status !== 'closed' ? ' critical' : ''}">
+      <div class="item-head">${erPrio(a.priority)}<span class="mono">${esc(a.ern)}</span><span class="grow">${erWho(a)}</span>${erStatus(a)}
+        ${a.escalation_level ? `<span class="pill warn">Escalated ×${a.escalation_level}</span>` : ''}</div>
+      <div class="meta">${esc(a.emergency_type)}${a.triage_level ? ' · Triage ' + esc(a.triage_level) : ''} · ${esc(a.location || 'Location not set')} · ${esc(a.assigned_doctor || a.team + ' team')}
+        · Arrived ${fmtTime(a.arrival_at)} ${fmtShort(a.arrival_at.slice(0, 10))} · ${a.status === 'closed' ? 'Closed after ' : 'Waiting '}${mins(a.elapsed_minutes)}
+        ${a.acknowledged_at ? ` · Acknowledged by ${esc(a.acknowledged_by)} in ${Math.round(a.ack_seconds / 6) / 10} min` : ' · <b class="bad-text">Not acknowledged</b>'}</div>
+      <div class="row">
+        <button class="btn small" data-act="erView" data-id="${a.id}">View</button>
+        ${a.can_ack ? `<button class="btn small primary" data-act="erAck" data-id="${a.id}">Acknowledge</button>` : ''}
+        ${a.can_update ? `<button class="btn small" data-act="erStatus" data-id="${a.id}">Update status</button>
+          <button class="btn small" data-act="erTriage" data-id="${a.id}">Triage priority</button>` : ''}
+        ${a.can_assign ? `<button class="btn small" data-act="erAssign" data-id="${a.id}">Assign clinician</button>
+          ${a.status === 'alert_created' || a.status === 'notification_sent' ? `<button class="btn small" data-act="erEscalate" data-id="${a.id}">Escalate</button>` : ''}` : ''}
+      </div></div>`).join('')}</div>` : `<div class="card glass"><div class="empty">${tab === 'open' ? 'No open emergencies' : 'No emergency alerts yet'}</div></div>`;
+  }
+  return `<div class="spread" style="align-items:flex-start"><div class="tabs">${tabs.map(([k, t]) => `<button data-act="erTab" data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+    ${data.can_raise ? `<button class="btn danger-solid" data-act="raiseAlert">${ic('siren')} Critical Emergency Alert</button>` : ''}</div>${body}`;
+};
+async function erReport(data) {
+  const r = await api('/emergencies/report');
+  const p = r.policy;
+  return `<div class="stack"><div class="grid cols-4">
+      <div class="tile glass"><div class="label">Alerts</div><div class="value">${r.total}</div><div class="foot">${r.open} open</div></div>
+      <div class="tile glass"><div class="label">Average time to acknowledge</div><div class="value">${r.avg_ack_seconds == null ? '–' : Math.round(r.avg_ack_seconds / 6) / 10}<small>min</small></div><div class="foot">From alert to the assigned doctor</div></div>
+      <div class="tile glass"><div class="label">Within policy</div><div class="value">${r.within_policy}<small>of ${r.acknowledged}</small></div><div class="foot">Acknowledged within ${p.ack_seconds} s</div></div>
+      <div class="tile glass"><div class="label">Escalated</div><div class="value">${r.escalated}</div><div class="foot">Not acknowledged in time</div></div></div>
+    <div class="card glass"><div class="card-head"><h2>Alert history</h2></div><div class="scroll-x"><table>
+      <thead><tr><th>ERN</th><th>Arrived</th><th>Type</th><th>Priority</th><th>Doctor</th><th class="num">Ack time</th><th class="num">Escalations</th><th>Status</th></tr></thead>
+      <tbody>${r.alerts.map((a) => `<tr><td><button class="link mono" data-act="erView" data-id="${a.id}">${esc(a.ern)}</button></td><td class="hint">${fmtShort(a.arrival_at.slice(0, 10))} ${fmtTime(a.arrival_at)}</td>
+        <td>${esc(a.emergency_type)}</td><td>${erPrio(a.priority)}</td><td>${esc(a.assigned_doctor || '–')}</td>
+        <td class="num">${a.ack_seconds == null ? '–' : a.ack_seconds + ' s'}</td><td class="num">${a.escalation_level}</td><td>${erStatus(a)}</td></tr>`).join('')}</tbody></table></div></div>
+    <div class="card glass"><div class="card-head"><h2>Response policy</h2><span class="grow"></span><span class="hint">Set by the hospital; applied to every new and open alert</span></div>
+      ${data.can_policy ? `<form class="form" data-form="erPolicy">
+        <div class="three"><label class="field">Escalate if not acknowledged in (seconds)<input name="ack_seconds" type="number" min="15" max="3600" value="${p.ack_seconds}" required></label>
+          <label class="field">Escalate again every (seconds)<input name="repeat_seconds" type="number" min="15" max="3600" value="${p.repeat_seconds}" required></label>
+          <label class="field">Highest escalation level<input name="max_level" type="number" min="0" max="6" value="${p.max_level}" required></label></div>
+        <div class="two"><label class="field">Retry undelivered alerts after (seconds)<input name="retry_seconds" type="number" min="5" max="600" value="${p.retry_seconds}" required></label>
+          <label class="field">Delivery attempts per person<input name="max_attempts" type="number" min="1" max="10" value="${p.max_attempts}" required></label></div>
+        <p class="hint">Level 1 alerts the emergency team, dean, administrator and reception again. Level 2 and above also alerts every available doctor and the chairman.</p>
+        <div><button class="btn primary" type="submit">Save policy</button></div></form>`
+        : `<dl class="kv"><dt>Escalate after</dt><dd>${p.ack_seconds} s without acknowledgement, then every ${p.repeat_seconds} s up to level ${p.max_level}</dd>
+          <dt>Retry</dt><dd>Undelivered alerts every ${p.retry_seconds} s, up to ${p.max_attempts} attempts</dd></dl>`}</div></div>`;
+}
+
+VIEW.emergency = async () => {
+  if (!S.arg) return live('erBoard');
+  const a = await api('/emergencies/' + S.arg);
+  return `<div class="stack">
+    <div><button class="btn small" data-act="go" data-view="emergency">${ic('back')} All emergencies</button></div>
+    <div class="grid split"><div class="stack">
+      <div class="card glass${a.status !== 'closed' && a.priority === 'critical' ? ' er-card' : ''}"><div class="card-head">${erPrio(a.priority)}<h2 class="mono">${esc(a.ern)}</h2><span class="grow"></span>${erStatus(a)}</div>
+        <div style="margin-bottom:12px">${erWho(a)}</div>
+        ${a.patient.allergies ? `<div class="alert" style="margin-bottom:12px">Allergy: ${esc(a.patient.allergies)}</div>` : ''}
+        <dl class="kv"><dt>Emergency</dt><dd>${esc(a.emergency_type)}</dd>
+          ${a.description ? `<dt>Description</dt><dd>${esc(a.description)}</dd>` : ''}
+          <dt>Triage</dt><dd>${esc(a.priority)}${a.triage_level ? ' · ' + esc(a.triage_level) : ' · not yet recorded by the clinical team'}</dd>
+          <dt>Location</dt><dd>${esc(a.location || 'Not set')}</dd><dt>Team</dt><dd>${esc(a.team)}</dd>
+          <dt>Doctor</dt><dd>${esc(a.assigned_doctor || 'Not assigned')}</dd>
+          <dt>Arrived</dt><dd>${fmtDate(a.arrival_at)} ${fmtTime(a.arrival_at)}</dd>
+          <dt>Alert raised</dt><dd>${fmtTime(a.created_at)} by ${esc(a.created_by)}</dd>
+          <dt>Received</dt><dd>${a.received_at ? fmtTime(a.received_at) + ' on the assigned doctor\'s screen' : 'Not yet shown to the assigned doctor'}</dd>
+          <dt>Acknowledged</dt><dd>${a.acknowledged_at ? `${fmtTime(a.acknowledged_at)} by ${esc(a.acknowledged_by)}` : '<b class="bad-text">Not yet</b>'}</dd>
+          <dt>Escalation</dt><dd>${a.escalation_level ? 'Level ' + a.escalation_level : 'None'}</dd></dl>
+        <div class="row" style="margin-top:16px">
+          ${a.can_ack ? `<button class="btn primary" data-act="erAck" data-id="${a.id}">Acknowledge emergency</button>` : ''}
+          ${a.can_update ? `<button class="btn small" data-act="erStatus" data-id="${a.id}">Update status</button><button class="btn small" data-act="erTriage" data-id="${a.id}">Triage priority</button>` : ''}
+          ${a.can_assign ? `<button class="btn small" data-act="erAssign" data-id="${a.id}">Assign clinician</button>` : ''}
+          ${!a.restricted && S.meta.clinical ? `<button class="btn small" data-act="openPatient" data-pid="${esc(a.patient.pid)}">Open full record</button>` : ''}
+        </div></div>
+      <div class="card glass"><div class="card-head"><h2>Notification delivery</h2><span class="grow"></span><span class="hint">Delivered means the person's app showed it</span></div>
+        <div class="scroll-x"><table><thead><tr><th>Recipient</th><th>Sent</th><th>Delivered</th><th>Acknowledged</th><th class="num">Attempts</th></tr></thead>
+        <tbody>${a.deliveries.map((d) => `<tr><td>${esc(d.who)} <span class="hint" style="text-transform:capitalize">${esc(d.role)}</span>${d.escalation ? ' <span class="pill warn plain">escalation</span>' : ''}</td>
+          <td class="hint">${fmtTime(d.sent_at)}</td><td>${d.delivered_at ? fmtTime(d.delivered_at) : '<span class="pill warn plain">pending</span>'}</td>
+          <td>${d.acked_at ? fmtTime(d.acked_at) : '–'}</td><td class="num">${d.attempts}</td></tr>`).join('')}</tbody></table></div></div>
+    </div>
+    <div class="card glass"><div class="card-head"><h2>Audit trail</h2></div>
+      <div class="timeline">${a.events.map((e) => `<div class="item"><div class="item-head"><span class="grow"><b>${esc(erEventText(e))}</b>
+        <div class="meta">${esc(e.who)} · ${fmtTime(e.at)} ${fmtShort(e.at.slice(0, 10))}</div></span></div>${e.note ? `<div class="meta">${esc(e.note)}</div>` : ''}</div>`).join('')}</div></div>
+    </div></div>`;
+};
+const ER_LABEL = Object.fromEntries([['alert_created', 'Alert created'], ['notification_sent', 'Notification sent'], ['acknowledged', 'Acknowledged'],
+  ['response_started', 'Clinical response started'], ['under_care', 'Patient under emergency care'], ['transferred', 'Transferred'], ['admitted', 'Admitted'], ['closed', 'Closed']]);
+function erEventText(e) {
+  if (e.action === 'status') return `Status: ${ER_LABEL[e.to] || e.to}`;
+  if (e.action === 'created') return 'Alert raised';
+  if (e.action === 'assigned') return `Assigned to ${e.to}${e.from ? ' (was ' + e.from + ')' : ''}`;
+  if (e.action === 'triage') return `Triage: ${e.from} → ${e.to}`;
+  if (e.action === 'escalated') return `Escalated to level ${e.to}`;
+  if (e.action === 'received') return 'Shown on the assigned doctor\'s screen';
+  if (e.action === 'seen') return 'Notification acknowledged';
+  return e.action;
+}
+
+async function doctorOptions(team, selected) {
+  const staff = (await api('/staff')).filter((u) => u.role === 'doctor');
+  staff.sort((a, b) => (b.department === team) - (a.department === team) || b.available - a.available || a.name.localeCompare(b.name));
+  return staff.map((u) => `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${esc(u.name)} · ${esc(u.department)}${u.available ? '' : ' (away)'}</option>`).join('');
+}
+
+Object.assign(ACT, {
+  async raiseAlert(d = {}) {
+    const meta = S.erMeta || await api('/emergencies');
+    S.erMeta = meta;
+    const team = d.team && S.meta.departments.includes(d.team) ? d.team : 'Emergency';
+    const docs = await doctorOptions(team);
+    const local = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    openModal(`<h2 class="bad-text">${ic('siren')} Critical Emergency Alert</h2><p class="sub">Alerts the emergency team, the assigned doctor, the dean, the chairman, the administrator and reception straight away. It does not replace the triage protocol or the emergency team's assessment.</p>
+      <form class="form" data-form="raiseAlert">
+        <input type="hidden" name="idem_key" value="${uid()}">
+        ${d.pid ? `<input type="hidden" name="pid" value="${esc(d.pid)}"><div class="note"><small>Patient</small>${esc(d.name || '')} <span class="mono">${esc(d.pid)}</span>${d.pin ? ` · new patient PIN <b class="mono">${esc(d.pin)}</b>` : ''}</div>`
+        : `<div class="tabs" style="margin-bottom:0"><button type="button" class="on" data-act="erMode" data-mode="find">Registered patient</button><button type="button" data-act="erMode" data-mode="new">New or unidentified patient</button></div>
+          <div data-mode="find"><label class="field">Patient${picker('Search by name or patient ID')}</label></div>
+          <div data-mode="new" hidden><div class="three"><label class="field">Name<input name="np_name" maxlength="120" placeholder="e.g. Unknown male"></label>
+            <label class="field">Age (approx.)<input name="np_age" type="number" min="0" max="120"></label>
+            <label class="field">Gender<select name="np_gender"><option>Male</option><option>Female</option><option>Other</option><option>Unknown</option></select></label></div></div>`}
+        <div class="two"><label class="field">Emergency type<select name="emergency_type" required>${meta.types.map((t) => `<option>${esc(t)}</option>`).join('')}</select></label>
+          <label class="field">Priority<select name="priority"><option value="critical">Critical emergency</option><option value="urgent">Urgent</option></select></label></div>
+        <label class="field">Brief description<textarea name="description" maxlength="600" placeholder="What happened, what the team should know">${esc(d.complaint || '')}</textarea></label>
+        <div class="two"><label class="field">Arrival time<input name="arrival_at" type="datetime-local" value="${local}" required></label>
+          <label class="field">Location<input name="location" list="er-locations" maxlength="60" value="Emergency bay 1" required>
+            <datalist id="er-locations">${['Emergency bay 1', 'Emergency bay 2', 'Emergency bay 3', 'Emergency bay 4', 'Resuscitation room', 'Ambulance bay', 'Triage desk'].map((l) => `<option>${l}</option>`).join('')}</datalist></label></div>
+        <div class="two"><label class="field">Responsible team<select name="team">${S.meta.departments.map((x) => `<option${x === team ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+          <label class="field">Assigned doctor<select name="assigned_doctor_id"><option value="">First available on the team</option>${docs}</select></label></div>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn danger-solid" type="submit">Send emergency alert</button></div>
+      </form>`, true);
+  },
+  erMode(d, el) {
+    const form = el.closest('form');
+    form.querySelectorAll('[data-act=erMode]').forEach((b) => b.classList.toggle('on', b === el));
+    form.querySelectorAll('div[data-mode]').forEach((x) => {
+      x.hidden = x.dataset.mode !== d.mode;
+      x.querySelectorAll('input, select').forEach((i) => { i.disabled = x.hidden; });  // hidden fields must not block submit
+    });
+    form.dataset.mode = d.mode;
+  },
+  async erTab(d) { S.erTab = d.tab; await refreshLive('erBoard'); },
+  erView(d) {
+    closeModal();
+    go('emergency', Number(d.id));
+  },
+  async erAck(d) {
+    const out = await api(`/emergencies/${d.id}/ack`, 'POST', {});
+    toast(out.result === 'acknowledged' ? `Acknowledged ${out.alert.ern}. The team can see you are responding.` : 'Marked as seen');
+    await Promise.all([refreshEmergency(), refreshLive('erBoard')]);
+    if (S.view === 'emergency' && S.arg) paint();
+  },
+  async erSeenNow(d) {
+    await api(`/emergencies/${d.id}/ack`, 'POST', {});
+    await refreshEmergency();
+  },
+  erSound() {
+    try { localStorage.setItem('cs_er_sound', soundOn() ? 'off' : 'on'); } catch { /* storage blocked */ }
+    refreshEmergency().catch(() => {});
+  },
+  async erAssign(d) {
+    const a = await api('/emergencies/' + d.id);
+    openModal(`<h2>Respond / assign backup</h2><p class="sub">${esc(a.ern)} · ${esc(a.emergency_type)} · now with ${esc(a.assigned_doctor || 'nobody')}</p>
+      <form class="form" data-form="erAssign" data-id="${a.id}">
+        <label class="field">Emergency clinician<select name="doctor_id">${await doctorOptions(a.team, null)}</select></label>
+        <label class="field">Note<input name="note" maxlength="400" placeholder="e.g. Dr. Arjun is in a procedure"></label>
+        <p class="hint">The new clinician is alerted and must acknowledge. Everything is kept in the audit trail.</p>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary" type="submit">Assign</button></div></form>`);
+  },
+  async erStatus(d) {
+    const a = await api('/emergencies/' + d.id);
+    const order = S.erMeta ? S.erMeta.statuses : Object.entries(ER_LABEL).map(([id, label]) => ({ id, label }));
+    const at = order.findIndex((s) => s.id === a.status);
+    openModal(`<h2>Update emergency status</h2><p class="sub">${esc(a.ern)} · now ${esc(a.status_label)}</p>
+      <form class="form" data-form="erStatus" data-id="${a.id}">
+        <label class="field">New status<select name="status">${order.slice(Math.max(2, at + 1)).map((s) => `<option value="${s.id}">${esc(s.label)}</option>`).join('')}</select></label>
+        <label class="field">Note (required to close)<textarea name="note" maxlength="400"></textarea></label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary" type="submit">Save status</button></div></form>`);
+  },
+  async erTriage(d) {
+    const a = await api('/emergencies/' + d.id);
+    openModal(`<h2>Triage priority</h2><p class="sub">Record the priority from the hospital's approved triage protocol. The system does not decide it.</p>
+      <form class="form" data-form="erTriage" data-id="${a.id}">
+        <div class="two"><label class="field">Priority<select name="priority">${['critical', 'urgent', 'normal'].map((p) => `<option value="${p}"${p === a.priority ? ' selected' : ''}>${p[0].toUpperCase() + p.slice(1)}</option>`).join('')}</select></label>
+          <label class="field">Triage level (protocol)<input name="triage_level" maxlength="60" value="${esc(a.triage_level)}" placeholder="e.g. Level 1 - Resuscitation"></label></div>
+        <label class="field">Reason<textarea name="note" maxlength="400" required></textarea></label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary" type="submit">Save triage</button></div></form>`);
+  },
+  erEscalate(d) {
+    openModal(`<h2>Escalate now?</h2><p class="sub">The emergency team, the dean, the administrator and reception are alerted again, and each further level widens the alert.</p>
+      <form class="form" data-form="erEscalate" data-id="${esc(d.id)}"><label class="field">Reason<input name="note" maxlength="400" placeholder="e.g. Assigned doctor not reachable"></label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn danger-solid" type="submit">Escalate</button></div></form>`);
+  },
+});
+
+async function erDone(message, id) {
+  closeModal();
+  toast(message);
+  await Promise.all([refreshEmergency(), refreshLive('erBoard')]);
+  if (S.view === 'emergency' && S.arg === Number(id)) paint();
+}
+
+Object.assign(FORMS, {
+  async raiseAlert(data, form) {
+    const body = { idem_key: data.idem_key, emergency_type: data.emergency_type, description: data.description, priority: data.priority,
+      location: data.location, team: data.team, arrival_at: data.arrival_at,
+      assigned_doctor_id: data.assigned_doctor_id ? Number(data.assigned_doctor_id) : null };
+    if (form.dataset.mode === 'new') {
+      if (!data.np_name || data.np_age === '') throw new Error('Enter a name (or "Unknown") and an approximate age');
+      body.new_patient = { name: data.np_name, age: Number(data.np_age), gender: data.np_gender };
+    } else {
+      body.pid = data.pid || pidFrom(data, form);
+      if (!body.pid) throw new Error('Choose the patient, or switch to New or unidentified patient');
+    }
+    const out = await api('/emergencies', 'POST', body);
+    const a = out.alert;
+    openModal(`<h2 class="bad-text">${ic('siren')} Emergency alert sent</h2><p class="sub">${esc(a.patient.name)} · ${esc(a.emergency_type)} · ${esc(a.location)}</p>
+      <div class="credential"><div><span>Emergency number</span><b>${esc(a.ern)}</b></div>
+        ${out.pin ? `<div><span>New patient ID and PIN</span><b>${esc(a.patient.pid)}</b><span class="mono">PIN ${esc(out.pin)}</span></div>` : `<div><span>Assigned doctor</span><b style="font-size:16px">${esc(a.assigned_doctor || a.team + ' team')}</b></div>`}</div>
+      <p class="hint">${out.duplicate ? 'This alert was already sent; no second alert was created.' : 'Saved and sent. You can follow acknowledgement and status on the Emergencies page.'}</p>
+      <div class="modal-actions" style="margin-top:14px"><button class="btn" data-act="close">Done</button><button class="btn primary" data-act="erView" data-id="${a.id}">Follow this emergency</button></div>`);
+    refreshEmergency().catch(() => {});
+    refreshLive('erBoard').catch(() => {});
+  },
+  async erAssign(data, form) {
+    const a = await api(`/emergencies/${form.dataset.id}/assign`, 'POST', { doctor_id: Number(data.doctor_id), note: data.note });
+    await erDone(`${a.ern} assigned to ${a.assigned_doctor}`, form.dataset.id);
+  },
+  async erStatus(data, form) {
+    const a = await api(`/emergencies/${form.dataset.id}/status`, 'POST', data);
+    await erDone(`${a.ern}: ${a.status_label}`, form.dataset.id);
+  },
+  async erTriage(data, form) {
+    const a = await api(`/emergencies/${form.dataset.id}/triage`, 'POST', data);
+    await erDone(`${a.ern}: triage saved`, form.dataset.id);
+  },
+  async erEscalate(data, form) {
+    const a = await api(`/emergencies/${form.dataset.id}/escalate`, 'POST', data);
+    await erDone(`${a.ern} escalated to level ${a.escalation_level}`, form.dataset.id);
+  },
+  async erPolicy(data) {
+    const body = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, Number(v)]));
+    await api('/emergencies/policy/current', 'POST', body);
+    toast('Response policy saved');
+  },
+});
+
+/* ---------- consultation drafts (kept when a doctor is interrupted) ---------- */
+function draftOf(form) {
+  const meds = [...form.querySelectorAll('.med-row')].map((row) => [$('[name=med]', row).value, $('[name=dose]', row).value, $('[name=dur]', row).value]);
+  return JSON.stringify({ diagnosis: form.diagnosis.value, notes: form.notes.value, refer_to: form.refer_to.value, refer_reason: form.refer_reason.value, meds });
+}
+let draftTimer;
+async function saveDraft() {
+  clearTimeout(draftTimer);
+  const form = $('form[data-form=complete]');
+  if (!form) return;
+  const draft = draftOf(form);
+  if (draft === S.draft) return;
+  await api(`/visits/${form.dataset.id}/draft`, 'POST', { draft });
+  S.draft = draft;
+  const el = $('#draft-state');
+  if (el) el.textContent = `Draft saved ${fmtTime(new Date().toISOString())}`;
+}
+AFTER.consult = () => {
+  const form = $('form[data-form=complete]');
+  if (!form || !S.draft) return;
+  try {
+    const d = JSON.parse(S.draft);
+    form.diagnosis.value = d.diagnosis || '';
+    form.notes.value = d.notes || '';
+    form.refer_to.value = d.refer_to || '';
+    form.refer_reason.value = d.refer_reason || '';
+    const rows = (d.meds || []).filter((m) => m.some(Boolean));
+    if (rows.length) {
+      $('#meds').innerHTML = rows.map(() => medRow()).join('');
+      [...$('#meds').children].forEach((row, i) => { $('[name=med]', row).value = rows[i][0]; $('[name=dose]', row).value = rows[i][1]; $('[name=dur]', row).value = rows[i][2]; });
+    }
+  } catch { /* old or empty draft */ }
+};
+document.addEventListener('input', (e) => {
+  if (e.target.closest('form[data-form=complete]')) {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => saveDraft().catch(() => {}), 1200);
+  }
+});
+
+/* ---------- equipment and supplies ---------- */
+const EQ_PILL = { pending_dean: 'warn', clarification: 'warn', rejected: 'bad', approved: 'info', sourcing_required: 'warn', sourcing: 'info',
+  backorder: 'warn', ready_for_dispatch: 'good', dispatched: 'info', partially_fulfilled: 'warn', fulfilled: 'good', cancelled: '', servicing: 'info' };
+const eqPill = (r) => `<span class="pill ${EQ_PILL[r.status] || ''}">${esc(r.status_label)}</span>`;
+const urgPill = (u) => `<span class="pill ${u === 'critical' ? 'bad' : u === 'urgent' ? 'warn' : 'plain'}">${u[0].toUpperCase() + u.slice(1)}</span>`;
+const human = (s) => String(s || '').replace(/_/g, ' ');
+const isOps = () => ['coordinator', 'admin'].includes(S.user.role);
+S.eq = { q: '', status: '', department: '', urgency: '', category: '', date_from: '', date_to: '', sort: 'created_at', dir: 'desc', page: 1, open_only: false };
+S.eqTab = null;
+
+async function catalog() {
+  if (!S.catalog) S.catalog = await api('/equipment/catalog');
+  return S.catalog;
+}
+function progress(r) {
+  if (r.dean_status !== 'approved' || !r.qty_approved) return '';
+  const pct = Math.min(100, Math.round((100 * r.qty_delivered) / r.qty_approved));
+  return `<div class="eq-progress"><div class="meter"><i style="width:${pct}%"></i></div><span class="hint">${r.qty_delivered} of ${r.qty_approved} delivered${r.qty_dispatched > r.qty_delivered ? ` · ${r.qty_dispatched - r.qty_delivered} on the way` : ''}${r.qty_reserved ? ` · ${r.qty_reserved} ready in stores` : ''}</span></div>`;
+}
+function eqCard(r) {
+  return `<div class="item${r.urgency === 'critical' && !['fulfilled', 'cancelled', 'rejected'].includes(r.status) ? ' critical' : ''}"><div class="item-head">
+      <span class="mono">${esc(r.ref)}</span><span class="grow"><b>${esc(r.item_name)}</b> × ${r.quantity}
+      <div class="meta">${esc(r.request_type_label)} · ${esc(r.category)} · ${esc(r.doctor)} · ${ago(r.created_at)}</div></span>${urgPill(r.urgency)}${eqPill(r)}</div>
+    ${progress(r)}
+    ${r.awaiting_my_answer ? '<div class="alert">A question is waiting for your answer.</div>' : ''}
+    <div class="row"><button class="btn small" data-act="eqOpen" data-id="${r.id}">View request</button>
+      ${r.awaiting_my_answer ? `<button class="btn small primary" data-act="eqRespond" data-id="${r.id}">Answer question</button>` : ''}</div></div>`;
+}
+function eqFilters(departments) {
+  const f = S.eq;
+  const cat = S.catalog;
+  const cats = [...new Set(cat.sections.flatMap((s) => s.categories.map((c) => c.category)))].sort();
+  const opt = (v, label, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
+  return `<div class="filters" data-filters>
+    <input data-f="q" placeholder="Search ID, item or category" value="${esc(f.q)}">
+    ${departments ? `<select data-f="department">${opt('', 'All departments', f.department)}${S.meta.departments.map((d) => opt(d, d, f.department)).join('')}</select>` : ''}
+    <select data-f="category">${opt('', 'All categories', f.category)}${cats.map((c) => opt(c, c, f.category)).join('')}</select>
+    <select data-f="urgency">${opt('', 'Any urgency', f.urgency)}${cat.urgency.map((u) => opt(u, u[0].toUpperCase() + u.slice(1), f.urgency)).join('')}</select>
+    <select data-f="status">${opt('', 'Any status', f.status)}${cat.statuses.map((s) => opt(s.id, s.label, f.status)).join('')}</select>
+    <label class="mini">From<input type="date" data-f="date_from" value="${esc(f.date_from)}"></label>
+    <label class="mini">To<input type="date" data-f="date_to" value="${esc(f.date_to)}"></label>
+    <label class="mini check"><input type="checkbox" data-f="open_only"${f.open_only ? ' checked' : ''}> Open only</label>
+  </div>`;
+}
+function eqQuery(extra = {}) {
+  const f = { ...S.eq, ...extra };
+  return Object.entries(f).filter(([, v]) => v !== '' && v !== false && v != null).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+}
+const COLS = [['ref', 'Request ID'], ['created_at', 'Requested'], [null, 'Doctor'], ['department', 'Department'], ['item_name', 'Item'], [null, 'Category'],
+  ['quantity', 'Requested', 'num'], [null, 'Approved', 'num'], [null, 'Sourced', 'num'], [null, 'Dispatched', 'num'], [null, 'Delivered', 'num'],
+  ['urgency', 'Urgency'], [null, 'Dean'], [null, 'Procurement'], [null, 'Dispatch'], ['expected_date', 'Expected'], [null, 'Supplier'],
+  ['updated_at', 'Last updated'], [null, 'Actions']];
+function nextAction(r) {
+  if (!r.can_operate) return '';
+  if (['repair', 'servicing'].includes(r.request_type) && r.status === 'approved') return ['eqService', 'Schedule service'];
+  if (r.status === 'ready_for_dispatch' || r.qty_reserved > 0) return ['eqDispatch', 'Dispatch'];
+  if (r.status === 'approved') return ['eqStock', 'Check stock'];
+  if (r.status === 'sourcing_required') return ['eqSource', 'Source item'];
+  return '';
+}
+function eqTable(page, full) {
+  const sortBtn = ([key, title, cls]) => `<th class="${cls || ''}">${key ? `<button class="th-sort${S.eq.sort === key ? ' on' : ''}" data-act="eqSort" data-key="${key}">${esc(title)}${S.eq.sort === key ? (S.eq.dir === 'asc' ? ' ↑' : ' ↓') : ''}</button>` : esc(title)}</th>`;
+  const cols = full ? COLS : COLS.filter(([, t]) => !['Sourced', 'Dispatched', 'Dean', 'Procurement', 'Dispatch', 'Supplier', 'Expected'].includes(t));
+  const pages = Math.max(1, Math.ceil(page.total / page.size));
+  const cell = (r, t) => ({
+    'Request ID': `<span class="mono">${esc(r.ref)}</span>`, Requested: null, Doctor: esc(r.doctor), Department: esc(r.department),
+    Item: `<b style="font-weight:500">${esc(r.item_name)}</b><div class="hint">${esc(r.request_type_label)}</div>`, Category: esc(r.category),
+    Approved: r.qty_approved || '–', Sourced: r.qty_sourced || '–', Dispatched: r.qty_dispatched || '–', Delivered: r.qty_delivered || '–',
+    Urgency: urgPill(r.urgency), Dean: `<span class="pill ${r.dean_status === 'approved' ? 'good' : r.dean_status === 'rejected' ? 'bad' : 'warn'} plain">${esc(human(r.dean_status))}</span>`,
+    Procurement: esc(human(r.procurement_status)), Dispatch: esc(human(r.dispatch_status)), Expected: esc(r.expected_date || '–'),
+    Supplier: esc(r.supplier || '–'), 'Last updated': `<span class="hint">${ago(r.updated_at)}</span>`,
+  }[t]);
+  const rows = page.rows.map((r) => {
+    const next = nextAction(r);
+    return `<tr class="${r.urgency === 'critical' && !['fulfilled', 'cancelled', 'rejected'].includes(r.status) ? 'hot-row' : ''}">${cols.map(([, t, cls]) => {
+      if (t === 'Requested' && cls) return `<td class="num">${r.quantity}</td>`;
+      if (t === 'Requested') return `<td class="hint" style="white-space:nowrap">${fmtShort(r.created_at.slice(0, 10))}</td>`;
+      if (t === 'Actions') return `<td style="white-space:nowrap"><button class="btn small" data-act="eqOpen" data-id="${r.id}">View</button>${next ? ` <button class="btn small primary" data-act="${next[0]}" data-id="${r.id}">${next[1]}</button>` : ''}</td>`;
+      if (t === 'Dean' || t === 'Item') return `<td>${cell(r, t)}</td>`;
+      return `<td class="${cls || ''}">${cell(r, t)}</td>`;
+    }).join('')}<td style="display:none"></td></tr>`;
+  }).join('');
+  return `<div class="scroll-x"><table class="eq-table"><thead><tr>${cols.map(sortBtn).join('')}</tr></thead>
+    <tbody>${rows || `<tr><td colspan="${cols.length}"><div class="empty">No requests match these filters</div></td></tr>`}</tbody></table></div>
+    <div class="spread" style="margin-top:12px"><span class="hint">${page.total} request${page.total === 1 ? '' : 's'} · page ${page.page} of ${pages}</span>
+      <span class="row"><button class="btn small" data-act="eqPage" data-step="-1" ${page.page <= 1 ? 'disabled' : ''}>Previous</button>
+      <button class="btn small" data-act="eqPage" data-step="1" ${page.page >= pages ? 'disabled' : ''}>Next</button></span></div>`;
+}
+
+LIVE.eqDoctor = async () => {
+  await catalog();
+  const tab = S.eqTab || (S.user.role === 'doctor' ? 'mine' : 'department');
+  const [list, tickets] = await Promise.all([api('/equipment/requests?size=50&scope=' + (tab === 'mine' ? 'mine' : 'department')), api('/equipment/maintenance?status=open')]);
+  const incoming = [];
+  for (const r of list.rows.filter((x) => x.qty_dispatched > x.qty_delivered)) {
+    const det = await api('/equipment/requests/' + r.id);
+    det.dispatches.filter((d) => d.can_confirm).forEach((d) => incoming.push({ ...d, item: r.item_name }));
+  }
+  const tabs = S.user.role === 'doctor' ? [['mine', 'My requests'], ['department', `${S.user.department} requests`]] : [['department', `${S.user.department} requests`]];
+  return `<div class="stack">
+    <div class="spread" style="align-items:flex-start"><div class="tabs">${tabs.map(([k, t]) => `<button data-act="eqTab" data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+      <span class="row">${S.user.role === 'doctor' ? `<button class="btn primary" data-act="eqNew">${ic('plus')} New request</button>` : ''}
+        <button class="btn" data-act="eqFault">${ic('wrench')} Report faulty equipment</button></span></div>
+    ${incoming.length ? `<div class="card glass"><div class="card-head"><h2>Deliveries to confirm</h2></div><div class="list">${incoming.map((d) => `<div class="item"><div class="item-head">
+        <span class="mono">${esc(d.ref)}</span><span class="grow"><b>${esc(d.item)}</b> × ${d.qty}<div class="meta">Sent ${ago(d.dispatched_at)} to ${esc(d.destination)}, carried by ${esc(d.handled_by)}${d.asset_tags ? ' · ' + esc(d.asset_tags) : ''}</div></span>
+        <button class="btn small primary" data-act="eqConfirm" data-id="${d.id}" data-qty="${d.qty}">Confirm receipt</button></div></div>`).join('')}</div></div>` : ''}
+    <div class="grid split"><div class="card glass"><div class="card-head"><h2>Requests</h2><span class="grow"></span><span class="pill plain">${list.total}</span></div>
+      ${list.rows.length ? `<div class="list">${list.rows.map(eqCard).join('')}</div>` : '<div class="empty">No requests yet. Use New request to ask for equipment or supplies.</div>'}</div>
+      <div class="card glass"><div class="card-head"><h2>Equipment under repair</h2></div>${ticketList(tickets)}</div></div>
+  </div>`;
+};
+function ticketList(tickets, manage) {
+  return tickets.length ? `<div class="list">${tickets.map((t) => `<div class="item${t.unsafe ? ' critical' : ''}"><div class="item-head"><span class="mono">${esc(t.ref)}</span>
+      <span class="grow"><b>${esc(t.item_name)}</b>${t.asset_tag ? ` <span class="mono faint">${esc(t.asset_tag)}</span>` : ''}<div class="meta">${esc(t.department || 'Stores')} · reported by ${esc(t.reported_by)} ${ago(t.created_at)}</div></span>
+      ${t.unsafe ? '<span class="pill bad">Unsafe, out of use</span>' : ''}<span class="pill ${t.status === 'completed' ? 'good' : 'info'}">${esc(t.status_label)}</span></div>
+    <div class="meta">${esc(t.issue)}</div>
+    ${t.technician || t.provider || t.scheduled_for ? `<div class="meta">${[t.technician, t.provider, t.scheduled_for && 'scheduled ' + t.scheduled_for].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+    ${t.findings ? `<div class="meta">Findings: ${esc(t.findings)}${t.parts_used ? ' · Parts: ' + esc(t.parts_used) : ''}${t.cost != null ? ' · Cost ' + esc(t.cost) : ''}</div>` : ''}
+    ${manage && t.can_manage ? `<div class="row"><button class="btn small" data-act="mtManage" data-id="${t.id}">Manage repair</button></div>` : ''}</div>`).join('')}</div>`
+    : '<div class="empty">Nothing under repair</div>';
+}
+
+LIVE.eqDean = async () => {
+  await catalog();
+  const [page, ov] = await Promise.all([api('/equipment/requests?size=15&' + eqQuery()), api('/equipment/overview')]);
+  return `<div class="stack">
+    <div class="grid cols-4">
+      <div class="tile glass"><div class="label">Awaiting your approval</div><div class="value">${ov.stages.pending_dean}</div><div class="foot">Including clarifications</div></div>
+      <div class="tile glass"><div class="label">Approved, being sourced</div><div class="value">${ov.stages.awaiting_sourcing + ov.stages.procurement}</div><div class="foot">${ov.stages.delayed} delayed</div></div>
+      <div class="tile glass"><div class="label">On the way or partial</div><div class="value">${ov.stages.in_transit + ov.stages.partial + ov.stages.ready_for_dispatch}</div><div class="foot">${ov.stages.ready_for_dispatch} ready in stores</div></div>
+      <div class="tile glass"><div class="label">Completed</div><div class="value">${ov.stages.completed}</div><div class="foot">${ov.stages.servicing} service jobs open</div></div></div>
+    <div class="card glass"><div class="card-head"><h2>Equipment requests</h2><span class="grow"></span><button class="link" data-act="eqPreset" data-status="pending_dean">Show pending approvals</button></div>
+      ${eqFilters(true)}${eqTable(page, false)}</div>
+    <div class="card glass"><div class="card-head"><h2>Outstanding needs by department</h2></div>${deptDemand(ov)}</div></div>`;
+};
+function deptDemand(ov) {
+  return ov.by_department.length ? `<div class="scroll-x"><table><thead><tr><th>Department</th><th class="num">Open requests</th><th class="num">Units outstanding</th><th class="num">Awaiting dean</th><th class="num">Critical</th></tr></thead>
+    <tbody>${ov.by_department.map((d) => `<tr><td>${esc(d.department)}</td><td class="num">${d.open}</td><td class="num">${d.units_outstanding}</td><td class="num">${d.awaiting_dean}</td>
+      <td class="num">${d.critical ? `<span class="pill bad plain">${d.critical}</span>` : 0}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No outstanding needs</div>';
+}
+function procurementTiles(ov) {
+  const st = ov.stages;
+  const tile = (label, n, foot, status) => `<button class="tile glass tile-btn" data-act="eqPreset" data-status="${status || ''}"><div class="label">${label}</div><div class="value">${n}</div><div class="foot">${foot}</div></button>`;
+  return `<div class="grid cols-4">
+    ${tile('Awaiting dean approval', st.pending_dean, 'Departmental requests', 'pending_dean,clarification')}
+    ${tile('Approved, awaiting sourcing', st.awaiting_sourcing, 'Stock check or supplier needed', 'approved,sourcing_required')}
+    ${tile('Procurement in progress', st.procurement, `${st.delayed} delayed`, 'sourcing,backorder')}
+    ${tile('Ready for dispatch', st.ready_for_dispatch, 'Reserved in stores', 'ready_for_dispatch')}
+    ${tile('In transit', st.in_transit, 'Dispatched, not yet confirmed', 'dispatched')}
+    ${tile('Partially fulfilled', st.partial, 'Some units still outstanding', 'partially_fulfilled')}
+    ${tile('Completed deliveries', st.completed, 'Fulfilled requests', 'fulfilled')}
+    ${tile('Servicing and repairs', st.servicing, `${ov.unsafe_open} unsafe item${ov.unsafe_open === 1 ? '' : 's'} out of use`, 'servicing')}</div>`;
+}
+LIVE.eqOverview = async () => {
+  await catalog();
+  const [ov, page] = await Promise.all([api('/equipment/overview'), api('/equipment/requests?size=15&' + eqQuery())]);
+  return `<div class="stack">${procurementTiles(ov)}
+    <div class="grid cols-2"><div class="card glass"><div class="card-head"><h2>Department-wise demand</h2></div>${deptDemand(ov)}</div>
+      <div class="card glass"><div class="card-head"><h2>Delayed and low stock</h2></div>
+        ${ov.delayed.length || ov.low_stock.length ? `<div class="list">${ov.delayed.map((o) => `<div class="item"><div class="item-head"><span class="mono">${esc(o.request)}</span><span class="grow">${esc(o.supplier)} · ref ${esc(o.reference || '–')}</span><span class="pill warn">Expected ${esc(o.expected_date)}</span></div></div>`).join('')}
+          ${ov.low_stock.map((i) => `<div class="item"><div class="item-head"><span class="grow"><b>${esc(i.name)}</b> <span class="mono faint">${esc(i.code)}</span></span><span class="pill bad">${i.available} left, minimum ${i.min_stock}</span></div></div>`).join('')}</div>`
+          : '<div class="empty">Nothing delayed or low</div>'}</div></div>
+    <div class="card glass"><div class="card-head"><h2>All requests</h2></div>${eqFilters(true)}${eqTable(page, true)}</div></div>`;
+};
+
+/* Coordinator (and administrator) workspace */
+LIVE.stores = async () => {
+  await catalog();
+  const tab = S.storeTab || 'requests';
+  const tabs = [['requests', 'Requests'], ['inventory', 'Inventory'], ['maintenance', 'Maintenance'], ['suppliers', 'Suppliers'], ['ledger', 'Stock movements']];
+  let body = '';
+  if (tab === 'requests') {
+    const [page, ov] = await Promise.all([api('/equipment/requests?' + eqQuery()), api('/equipment/overview')]);
+    body = `${procurementTiles(ov)}<div class="card glass" style="margin-top:18px"><div class="card-head"><h2>Request management</h2></div>${eqFilters(true)}${eqTable(page, true)}</div>`;
+  } else if (tab === 'inventory') {
+    const rows = await api('/equipment/inventory?q=' + encodeURIComponent(S.invQ || ''));
+    body = `<div class="card glass"><div class="card-head"><h2>Equipment inventory</h2><span class="grow"></span>
+        <input data-inv-q placeholder="Search item, code or model" value="${esc(S.invQ || '')}" style="max-width:260px">
+        <button class="btn small primary" data-act="invNew">${ic('plus')} Add item</button></div>
+      <div class="scroll-x"><table class="eq-table"><thead><tr><th>Item ID</th><th>Equipment</th><th>Category</th><th>Tracking</th><th class="num">Total</th><th class="num">Available</th><th class="num">Reserved</th>
+        <th class="num">In service</th><th class="num">Maintenance</th><th class="num">Damaged</th><th>Location</th><th>Next service</th><th>Condition</th><th></th></tr></thead>
+      <tbody>${rows.map((i) => `<tr class="${i.low ? 'hot-row' : ''}"><td class="mono">${esc(i.code)}</td><td><b style="font-weight:500">${esc(i.name)}</b><div class="hint">${esc(i.model)}</div></td>
+        <td>${esc(i.category)}</td><td class="hint">${i.tracking === 'asset' ? 'Tagged assets' : 'Quantity'}</td><td class="num">${i.total}</td>
+        <td class="num">${i.low ? `<span class="pill bad plain">${i.available}</span>` : i.available}</td><td class="num">${i.reserved}</td><td class="num">${i.in_service}</td>
+        <td class="num">${i.maintenance}</td><td class="num">${i.damaged}</td><td class="hint">${esc(i.location)}</td>
+        <td>${i.next_maintenance ? `<span class="${i.service_due ? 'pill warn plain' : 'hint'}">${esc(i.next_maintenance)}</span>` : '–'}</td>
+        <td>${i.condition === 'unsafe' ? '<span class="pill bad">Unsafe</span>' : esc(i.condition)}</td>
+        <td><button class="btn small" data-act="invOpen" data-id="${i.id}">Open</button></td></tr>`).join('')}</tbody></table></div></div>`;
+  } else if (tab === 'maintenance') {
+    const tickets = await api('/equipment/maintenance?status=open');
+    body = `<div class="card glass"><div class="card-head"><h2>Open maintenance and repairs</h2><span class="grow"></span><button class="btn small" data-act="eqFault">${ic('wrench')} Log an issue</button></div>${ticketList(tickets, true)}</div>`;
+  } else if (tab === 'suppliers') {
+    const rows = await api('/equipment/suppliers');
+    body = `<div class="grid split"><div class="card glass"><div class="card-head"><h2>Suppliers and service providers</h2></div>
+      <div class="scroll-x"><table><thead><tr><th>Name</th><th>Type</th><th>Contact</th><th>Phone</th><th>Email</th></tr></thead>
+      <tbody>${rows.map((s) => `<tr><td>${esc(s.name)}</td><td class="hint">${s.kind === 'service' ? 'Service provider' : 'Supplier'}</td><td>${esc(s.contact)}</td><td class="mono hint">${esc(s.phone)}</td><td class="hint">${esc(s.email)}</td></tr>`).join('')}</tbody></table></div></div>
+      <div class="card glass"><div class="card-head"><h2>Add a supplier</h2></div><form class="form" data-form="supplier">
+        <label class="field">Name<input name="name" required minlength="2" maxlength="120"></label>
+        <label class="field">Type<select name="kind"><option value="supplier">Supplier</option><option value="service">Service provider</option></select></label>
+        <div class="two"><label class="field">Contact person<input name="contact" maxlength="120"></label><label class="field">Phone<input name="phone" maxlength="30"></label></div>
+        <label class="field">Email<input name="email" maxlength="120" type="email"></label><div><button class="btn primary" type="submit">Add supplier</button></div></form></div></div>`;
+  } else {
+    const rows = await api('/equipment/transactions');
+    body = `<div class="card glass"><div class="card-head"><h2>Stock movements</h2><span class="grow"></span><span class="hint">Every reserve, receipt, dispatch, return and repair</span></div>
+      <div class="scroll-x"><table><thead><tr><th>When</th><th>Item</th><th>Movement</th><th class="num">Qty</th><th>From → to</th><th>Assets</th><th>By</th><th>Note</th></tr></thead>
+      <tbody>${rows.map((t) => `<tr><td class="hint" style="white-space:nowrap">${fmtShort(t.at.slice(0, 10))} ${fmtTime(t.at)}</td><td>${esc(t.item)} <span class="mono faint">${esc(t.code)}</span></td>
+        <td>${esc(human(t.kind))}</td><td class="num">${t.qty}</td><td class="hint">${esc(human(t.from))} → ${esc(human(t.to))}</td><td class="mono hint" style="font-size:12px">${esc(t.tags)}</td><td>${esc(t.who)}</td><td class="hint">${esc(t.note)}</td></tr>`).join('')}</tbody></table></div></div>`;
+  }
+  return `<div class="tabs">${tabs.map(([k, t]) => `<button data-act="storeTab" data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>${body}`;
+};
+
+HOME.coordinator = () => live('stores');
+LIVE.adminHome = async () => {
+  const [st, er, ov] = await Promise.all([api('/status'), api('/emergencies'), api('/equipment/overview')]);
+  return `<div class="stack">
+    <div class="grid cols-4">
+      <div class="tile glass"><div class="label">Open emergencies</div><div class="value">${er.alerts.length}</div><div class="foot">${er.alerts.filter((a) => !a.acknowledged_at).length} not yet acknowledged</div></div>
+      <div class="tile glass"><div class="label">Patients waiting</div><div class="value">${st.departments.reduce((n, d) => n + d.waiting, 0)}</div><div class="foot">Across all departments</div></div>
+      <div class="tile glass"><div class="label">Equipment awaiting dean</div><div class="value">${ov.stages.pending_dean}</div><div class="foot">${ov.stages.awaiting_sourcing} approved, awaiting sourcing</div></div>
+      <div class="tile glass"><div class="label">Delayed or low stock</div><div class="value">${ov.stages.delayed + ov.low_stock.length}</div><div class="foot">${ov.unsafe_open} unsafe items out of use</div></div></div>
+    <div class="grid cols-2"><div class="card glass"><div class="card-head"><h2>Emergency response</h2><span class="grow"></span><button class="link" data-act="go" data-view="emergency">Open emergencies</button></div>
+        ${er.alerts.length ? `<div class="list">${er.alerts.map((a) => `<div class="item${a.priority === 'critical' ? ' critical' : ''}"><div class="item-head">${erPrio(a.priority)}<span class="mono">${esc(a.ern)}</span><span class="grow">${erWho(a)}</span>${erStatus(a)}</div>
+          <div class="meta">${esc(a.emergency_type)} · ${esc(a.location)} · ${esc(a.assigned_doctor || a.team + ' team')} · ${mins(a.elapsed_minutes)}</div></div>`).join('')}</div>` : '<div class="empty">No open emergencies</div>'}</div>
+      <div class="card glass"><div class="card-head"><h2>Departments right now</h2></div>${deptTable(st)}</div></div>
+    <div class="card glass"><div class="card-head"><h2>Resource needs by department</h2><span class="grow"></span><button class="link" data-act="go" data-view="equipment">Procurement</button></div>${deptDemand(ov)}</div></div>`;
+};
+HOME.admin = () => live('adminHome');
+
+VIEW.equipment = () => {
+  const role = S.user.role;
+  if (role === 'doctor' || role === 'nurse') return live('eqDoctor');
+  if (role === 'dean') return live('eqDean');
+  if (role === 'admin') return S.adminStores ? live('stores').then((h) => `<div class="row" style="margin-bottom:14px"><button class="btn small" data-act="adminStores" data-on="0">${ic('back')} Procurement overview</button></div>${h}`)
+    : live('eqOverview').then((h) => `<div class="row" style="margin-bottom:14px;justify-content:flex-end"><button class="btn small primary" data-act="adminStores" data-on="1">Open stores and dispatch</button></div>${h}`);
+  return live('eqOverview');
+};
+
+async function refreshEq() {
+  await Promise.all(['eqDoctor', 'eqDean', 'eqOverview', 'stores', 'adminHome'].map((n) => refreshLive(n).catch(() => {})));
+}
+
+async function openRequest(id) {
+  const r = await api('/equipment/requests/' + id);
+  const role = S.user.role;
+  const qty = [['Requested', r.quantity], ['Approved', r.qty_approved], ['Reserved', r.qty_reserved], ['Sourced', r.qty_sourced], ['Received', r.qty_received],
+    ['Dispatched', r.qty_dispatched], ['Delivered', r.qty_delivered], ['Returned', r.qty_returned]];
+  const act = (a, label, cls = '') => `<button class="btn small ${cls}" data-act="${a}" data-id="${r.id}">${label}</button>`;
+  const actions = [];
+  if (r.can_decide) actions.push(act('eqDecide', 'Approve', 'primary'), act('eqClarifyDean', 'Request clarification'), act('eqReject', 'Reject', 'danger'));
+  if (r.awaiting_my_answer) actions.push(act('eqRespond', 'Answer question', 'primary'));
+  if (r.can_operate) {
+    actions.push(act('eqStock', 'Check stock'), act('eqReserve', 'Reserve stock'), act('eqSource', 'Source item'));
+    if (r.qty_reserved) actions.push(act('eqDispatch', 'Dispatch', 'primary'), act('eqRelease', 'Release reservation'));
+    if (['repair', 'servicing', 'replacement'].includes(r.request_type)) actions.push(act('eqService', 'Schedule service'));
+    actions.push(act('eqBackorder', 'Backorder'), act('eqAsk', 'Ask the doctor'));
+  }
+  if (r.qty_delivered && (isOps() || (['doctor', 'nurse'].includes(role) && S.user.department === r.department))) actions.push(act('eqReturn', 'Record a return'));
+  if (r.can_cancel) actions.push(act('eqCancel', 'Cancel request', 'danger'));
+  openModal(`<div class="spread"><div><h2><span class="mono">${esc(r.ref)}</span> · ${esc(r.item_name)}</h2>
+      <p class="sub" style="margin-bottom:10px">${esc(r.request_type_label)} · ${esc(r.category)} · ${esc(r.department)}, ${esc(r.location)} · requested by ${esc(r.doctor)} on ${fmtDate(r.created_at)}</p></div>
+      <button class="icon-btn" data-act="close" aria-label="Close">${ic('x')}</button></div>
+    <div class="row" style="margin-bottom:12px">${urgPill(r.urgency)}${eqPill(r)}<span class="pill plain">Dean: ${esc(human(r.dean_status))}</span>
+      <span class="pill plain">Procurement: ${esc(human(r.procurement_status))}</span><span class="pill plain">Dispatch: ${esc(human(r.dispatch_status))}</span>
+      ${r.emergency_policy ? '<span class="pill bad plain">Emergency procurement policy</span>' : ''}</div>
+    <div class="qty-grid">${qty.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
+    ${progress(r)}
+    <dl class="kv" style="margin:14px 0"><dt>Justification</dt><dd style="white-space:pre-wrap">${esc(r.justification)}</dd>
+      ${r.decision_note ? `<dt>Dean's note</dt><dd>${esc(r.decision_note)} (${esc(r.decided_by)})</dd>` : ''}
+      ${r.supplier ? `<dt>Supplier</dt><dd>${esc(r.supplier)}</dd>` : ''}${r.expected_date ? `<dt>Expected</dt><dd>${esc(r.expected_date)}</dd>` : ''}
+      ${r.attachment ? `<dt>Attachment</dt><dd><button class="link" data-act="eqAttachment" data-id="${r.id}" data-name="${esc(r.attachment)}">${esc(r.attachment)}</button></dd>` : ''}
+      ${r.reserved_tags.length ? `<dt>Reserved assets</dt><dd class="mono" style="font-size:13px">${esc(r.reserved_tags.join(', '))}</dd>` : ''}</dl>
+    ${actions.length ? `<div class="row eq-actions">${actions.join('')}</div>` : ''}
+    ${r.sourcing.length ? `<h3 class="sec">Sourcing</h3><div class="list">${r.sourcing.map((o) => `<div class="item"><div class="item-head"><span class="grow"><b>${esc(o.supplier)}</b> · ref ${esc(o.reference || '–')} · ${o.qty_ordered} ordered
+        <div class="meta">${o.qty_arrived} arrived · ${o.qty_accepted} accepted · ${o.qty_rejected} rejected${o.expected_date ? ' · expected ' + esc(o.expected_date) : ''}${o.inspection_note ? ' · ' + esc(o.inspection_note) : ''}</div></span>
+        <span class="pill ${o.status === 'delayed' || o.overdue ? 'warn' : o.status === 'received' ? 'good' : 'info'}">${esc(o.overdue && o.status === 'ordered' ? 'overdue' : o.status)}</span></div>
+        ${isOps() && ['ordered', 'delayed', 'arrived'].includes(o.status) ? `<div class="row">
+          ${o.qty_arrived < o.qty_ordered ? `<button class="btn small primary" data-act="soArrive" data-id="${o.id}" data-max="${o.qty_ordered - o.qty_arrived}" data-req="${r.id}">Mark received</button>` : ''}
+          ${o.qty_arrived > o.qty_accepted + o.qty_rejected ? `<button class="btn small primary" data-act="soInspect" data-id="${o.id}" data-max="${o.qty_arrived - o.qty_accepted - o.qty_rejected}" data-req="${r.id}" data-tracking="${esc(r.reserved_tags.length || r.catalog_id ? 'check' : '')}">Inspect</button>` : ''}
+          <button class="btn small" data-act="soUpdate" data-id="${o.id}" data-req="${r.id}">Update date or status</button></div>` : ''}</div>`).join('')}</div>` : ''}
+    ${r.dispatches.length ? `<h3 class="sec">Dispatches</h3><div class="list">${r.dispatches.map((d) => `<div class="item"><div class="item-head"><span class="grow"><b>${d.qty}</b> to ${esc(d.destination)}
+        <div class="meta">${fmtDate(d.dispatched_at)} ${fmtTime(d.dispatched_at)} by ${esc(d.dispatched_by)}, carried by ${esc(d.handled_by)}${d.asset_tags ? ' · ' + esc(d.asset_tags) : ''}
+        ${d.delivered_at ? `<br>${d.qty_delivered} received by ${esc(d.received_by)} at ${fmtTime(d.delivered_at)} (confirmed by ${esc(d.confirmed_by)})` : ''}</div></span>
+        <span class="pill ${d.status === 'delivered' ? 'good' : d.status === 'short' ? 'warn' : 'info'}">${esc(human(d.status))}</span>
+        ${d.can_confirm ? `<button class="btn small primary" data-act="eqConfirm" data-id="${d.id}" data-qty="${d.qty}" data-req="${r.id}">Confirm delivery</button>` : ''}</div></div>`).join('')}</div>` : ''}
+    ${r.tickets.length ? `<h3 class="sec">Service</h3>${ticketList(r.tickets, true)}` : ''}
+    <h3 class="sec">History</h3><div class="timeline">${r.history.map((h) => `<div class="item"><div class="item-head"><span class="grow"><b>${esc(h.action[0].toUpperCase() + h.action.slice(1))}</b>${h.qty != null ? ` · ${h.qty}` : ''}
+      <div class="meta">${esc(h.who)} · ${fmtShort(h.at.slice(0, 10))} ${fmtTime(h.at)}${h.to && h.from !== h.to ? ` · ${esc(human(h.from) || 'new')} → ${esc(human(h.to))}` : ''}</div></span></div>${h.note ? `<div class="meta">${esc(h.note)}</div>` : ''}</div>`).join('')}</div>`, true);
+}
+
+function formModal(title, sub, form, fields, submit, cls = 'primary') {
+  openModal(`<h2>${esc(title)}</h2><p class="sub">${sub}</p><form class="form" data-form="${form.name}" ${Object.entries(form).filter(([k]) => k !== 'name').map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ')}>
+    ${fields}<div class="modal-actions"><button type="button" class="btn" data-act="${form.back ? 'eqOpen' : 'close'}" data-id="${esc(form.back || '')}">Back</button><button class="btn ${cls}" type="submit">${esc(submit)}</button></div></form>`);
+}
+
+Object.assign(ACT, {
+  eqOpen(d) { return openRequest(d.id); },
+  async eqTab(d) { S.eqTab = d.tab; await refreshLive('eqDoctor'); },
+  async storeTab(d) { S.storeTab = d.tab; await refreshLive('stores'); },
+  adminStores(d) { S.adminStores = d.on === '1'; paint(); },
+  async eqSort(d) {
+    S.eq.dir = S.eq.sort === d.key && S.eq.dir === 'desc' ? 'asc' : 'desc';
+    S.eq.sort = d.key;
+    S.eq.page = 1;
+    await refreshEq();
+  },
+  async eqPage(d) { S.eq.page = Math.max(1, S.eq.page + Number(d.step)); await refreshEq(); },
+  async eqPreset(d) {
+    Object.assign(S.eq, { status: d.status || '', page: 1 });
+    if (S.user.role === 'coordinator' || S.adminStores) S.storeTab = 'requests';
+    await refreshEq();
+    const table = $('.eq-table');
+    if (table) table.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
+  async eqNew() {
+    const cat = await catalog();
+    const mine = cat.sections.filter((s) => s.for_me && !s.shared);
+    const shared = cat.sections.filter((s) => s.shared);
+    const other = cat.sections.filter((s) => !s.for_me);
+    const group = (label, rows) => (rows.length ? `<optgroup label="${esc(label)}">${rows.map((s) => `<option>${esc(s.section)}</option>`).join('')}</optgroup>` : '');
+    openModal(`<h2>New equipment or supplies request</h2><p class="sub">For ${esc(S.user.department)}. It goes to the dean for approval, then to the equipment coordinator.</p>
+      <form class="form" data-form="eqNew"><input type="hidden" name="idem_key" value="${uid()}">
+        <label class="field">Catalogue department<select name="section">${group(`For ${S.user.department}`, mine)}${group('Hospital-wide services', shared)}${group('Other departments', other)}
+          <option value="__other">Not in the catalogue</option></select></label>
+        <div class="two"><label class="field">Category<select name="category"></select></label><label class="field">Item<select name="catalog_id"></select></label></div>
+        <div data-other hidden class="two"><label class="field">Item name<input name="item_name" maxlength="120"></label><label class="field">Category<input name="other_category" maxlength="60" placeholder="e.g. Diagnostic"></label></div>
+        <div class="three"><label class="field">Request type<select name="request_type">${cat.request_types.map((t) => `<option value="${t.id}">${esc(t.label)}</option>`).join('')}</select></label>
+          <label class="field">Quantity<input name="quantity" type="number" min="1" max="10000" value="1" required></label>
+          <label class="field">Urgency<select name="urgency"><option value="routine">Routine</option><option value="urgent">Urgent</option><option value="critical">Critical</option></select></label></div>
+        <label class="field">Location<input name="location" maxlength="80" value="${esc(S.user.department)} ward"></label>
+        <label class="field">Justification<textarea name="justification" required minlength="5" maxlength="2000" placeholder="Why it is needed, for how many patients, what happens without it"></textarea></label>
+        <label class="field">Supporting document (optional, up to 3 MB)<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx,.txt,.csv"></label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary" type="submit">Send to the dean</button></div></form>`, true);
+    fillCatalog($('form[data-form=eqNew]'));
+  },
+  eqDecide(d) {
+    return api('/equipment/requests/' + d.id).then((r) => formModal('Approve request', `${esc(r.ref)} · ${r.quantity} × ${esc(r.item_name)} for ${esc(r.department)}`, { name: 'eqDecide', id: r.id, action: 'approve', back: r.id },
+      `<label class="field">Approved quantity<input name="qty_approved" type="number" min="1" max="10000" value="${r.quantity}" required></label>
+       <label class="field">Note (needed if you approve more than requested)<textarea name="note" maxlength="400"></textarea></label>
+       <p class="hint">Approving forwards the request to the equipment coordinator for stock, sourcing and dispatch.</p>`, 'Approve and forward'));
+  },
+  eqReject(d) {
+    formModal('Reject request', 'The doctor sees your reason.', { name: 'eqDecide', id: d.id, action: 'reject', back: d.id },
+      '<label class="field">Reason<textarea name="note" required minlength="3" maxlength="400"></textarea></label>', 'Reject', 'danger');
+  },
+  eqClarifyDean(d) {
+    formModal('Request clarification', 'The request goes back to the doctor until they answer.', { name: 'eqDecide', id: d.id, action: 'clarify', back: d.id },
+      '<label class="field">Question for the doctor<textarea name="note" required minlength="3" maxlength="400"></textarea></label>', 'Send question');
+  },
+  async eqRespond(d) {
+    const r = await api('/equipment/requests/' + d.id);
+    const q = [...r.history].reverse().find((h) => h.action === 'clarification requested');
+    formModal('Answer the question', q ? `${esc(q.who)}: ${esc(q.note)}` : '', { name: 'eqRespond', id: r.id, back: r.id },
+      `<label class="field">Your answer<textarea name="note" required minlength="2" maxlength="400"></textarea></label>
+       ${r.dean_status === 'clarification' ? `<label class="field">Quantity<input name="quantity" type="number" min="1" max="10000" value="${r.quantity}"></label>` : ''}`, 'Send answer');
+  },
+  eqAsk(d) {
+    formModal('Ask the doctor', 'For example, which model or what can be used meanwhile.', { name: 'eqAsk', id: d.id, back: d.id },
+      '<label class="field">Question<textarea name="note" required minlength="2" maxlength="400"></textarea></label>', 'Send question');
+  },
+  async eqStock(d) {
+    const out = await api(`/equipment/requests/${d.id}/check-stock`, 'POST');
+    const r = out.request;
+    openModal(`<h2>Stock for ${esc(r.item_name)}</h2><p class="sub">${out.needed} still needed for ${esc(r.ref)} · ${out.available} available in stores${out.available < out.needed ? ` · <b class="bad-text">short by ${out.needed - out.available}</b>` : ''}</p>
+      ${out.items.length ? `<div class="list">${out.items.map((i) => `<div class="item"><div class="item-head"><span class="grow"><b>${esc(i.name)}</b> <span class="mono faint">${esc(i.code)}</span>
+          <div class="meta">${i.available} available · ${i.reserved} reserved · ${i.in_service} in service · ${i.maintenance} in maintenance · ${esc(i.location)}</div></span>
+          ${i.condition === 'unsafe' ? '<span class="pill bad">Unsafe</span>' : ''}
+          ${i.available && out.needed && i.condition !== 'unsafe' ? `<button class="btn small primary" data-act="eqReserve" data-id="${r.id}" data-inv="${i.id}" data-qty="${Math.min(i.available, out.needed)}" data-tracking="${i.tracking}">Reserve ${Math.min(i.available, out.needed)}</button>` : ''}</div></div>`).join('')}</div>`
+        : '<div class="empty">This item is not stocked yet</div>'}
+      <div class="modal-actions" style="margin-top:14px"><button class="btn" data-act="eqOpen" data-id="${r.id}">Back to request</button>
+        ${out.available < out.needed ? `<button class="btn primary" data-act="eqSource" data-id="${r.id}" data-qty="${out.needed - out.available}">Source ${out.needed - out.available} externally</button>` : ''}</div>`, true);
+    refreshEq();
+  },
+  async eqReserve(d) {
+    let inv = d.inv;
+    let qty = d.qty;
+    if (!inv) {
+      const out = await api(`/equipment/requests/${d.id}/check-stock`, 'POST');
+      const best = out.items.find((i) => i.available && i.condition !== 'unsafe');
+      if (!best) throw new Error('Nothing available in stores. Source it externally.');
+      inv = best.id;
+      qty = Math.min(best.available, out.needed);
+    }
+    formModal('Reserve stock', 'Reserved units are held for this request and are no longer offered to anyone else.', { name: 'eqReserve', id: d.id, inv, back: d.id },
+      `<label class="field">Quantity to reserve<input name="qty" type="number" min="1" value="${esc(qty)}" required></label>
+       <label class="field">Specific asset tags (optional, comma separated)<input name="asset_tags" placeholder="Leave empty to take the first available units"></label>`, 'Reserve');
+  },
+  async eqSource(d) {
+    const [r, sup] = await Promise.all([api('/equipment/requests/' + d.id), api('/equipment/suppliers')]);
+    const need = d.qty || Math.max(1, r.qty_approved - r.qty_reserved - r.qty_dispatched - r.sourcing.filter((o) => ['ordered', 'delayed', 'arrived'].includes(o.status)).reduce((n, o) => n + o.qty_ordered - o.qty_accepted - o.qty_rejected, 0));
+    formModal('Source externally', `${esc(r.ref)} · ${esc(r.item_name)}`, { name: 'eqSource', id: r.id, back: r.id },
+      `<label class="field">Supplier or service provider<input name="supplier_name" list="sup-list" required placeholder="Choose or type a new one"><datalist id="sup-list">${sup.map((s) => `<option>${esc(s.name)}</option>`).join('')}</datalist></label>
+       <div class="three"><label class="field">Quantity<input name="qty" type="number" min="1" value="${need}" required></label>
+         <label class="field">PO / reference<input name="reference" maxlength="60"></label>
+         <label class="field">Expected arrival<input name="expected_date" type="date"></label></div>`, 'Record order');
+  },
+  soArrive(d) {
+    formModal('Mark received', 'Items that arrive are held for inspection before they enter stock.', { name: 'soArrive', id: d.id, back: d.req },
+      `<label class="field">Quantity that arrived<input name="qty" type="number" min="1" max="${esc(d.max)}" value="${esc(d.max)}" required></label>
+       <label class="field">Note<input name="note" maxlength="400" placeholder="Delivery note, condition of packaging"></label>`, 'Record arrival');
+  },
+  soInspect(d) {
+    formModal('Inspect delivery', 'Accepted units go into stock and are reserved for this request. Rejected units are not stocked and are sourced again.', { name: 'soInspect', id: d.id, back: d.req },
+      `<div class="two"><label class="field">Accepted<input name="accepted" type="number" min="0" max="${esc(d.max)}" value="${esc(d.max)}" required></label>
+        <label class="field">Rejected<input name="rejected" type="number" min="0" max="${esc(d.max)}" value="0" required></label></div>
+       <label class="field">Asset tags for accepted tagged equipment (one per unit, comma separated)<input name="asset_tags" placeholder="e.g. CS-MON-031, CS-MON-032"></label>
+       <label class="field">Inspection findings<textarea name="note" required minlength="2" maxlength="400"></textarea></label>`, 'Save inspection');
+  },
+  soUpdate(d) {
+    formModal('Update sourcing order', 'Doctors and the dean are told about delays.', { name: 'soUpdate', id: d.id, back: d.req },
+      `<div class="two"><label class="field">New expected date<input name="expected_date" type="date"></label>
+        <label class="field">Status<select name="status"><option value="">Unchanged</option><option value="delayed">Delayed</option><option value="ordered">On track</option><option value="cancelled">Cancel this order</option></select></label></div>
+       <label class="field">Note (needed to cancel)<input name="note" maxlength="400"></label>`, 'Save');
+  },
+  async eqDispatch(d) {
+    const r = await api('/equipment/requests/' + d.id);
+    formModal('Dispatch to department', `${esc(r.ref)} · ${r.qty_reserved} reserved for ${esc(r.department)}${r.reserved_tags.length ? ' · ' + esc(r.reserved_tags.join(', ')) : ''}`, { name: 'eqDispatch', id: r.id, back: r.id, key: uid() },
+      `<div class="two"><label class="field">Quantity<input name="qty" type="number" min="1" max="${r.qty_reserved}" value="${r.qty_reserved}" required></label>
+        <label class="field">Destination<input name="destination" maxlength="120" value="${esc(r.location || r.department)}" required></label></div>
+       <label class="field">Carried by (responsible staff)<input name="handled_by" maxlength="120" required minlength="2" value="${esc(S.user.name)}"></label>`, 'Dispatch');
+  },
+  eqConfirm(d) {
+    formModal('Confirm receipt', 'Count what actually arrived. Anything missing is reported to stores.', { name: 'eqConfirm', id: d.id, back: d.req || '' },
+      `<div class="two"><label class="field">Quantity received<input name="qty_delivered" type="number" min="1" max="${esc(d.qty)}" value="${esc(d.qty)}" required></label>
+        <label class="field">Received by<input name="received_by" maxlength="120" value="${esc(S.user.name)}" required></label></div>
+       <label class="field">Note<input name="note" maxlength="400"></label>`, 'Confirm');
+  },
+  eqRelease(d) {
+    formModal('Release reservation', 'Released units go back to available stock.', { name: 'eqRelease', id: d.id, back: d.id },
+      `<label class="field">Quantity<input name="qty" type="number" min="1" value="1" required></label><label class="field">Reason<input name="reason" required minlength="3" maxlength="400"></label>`, 'Release');
+  },
+  eqReturn(d) {
+    formModal('Record a return', 'Returned units go back to stores. Damaged ones are kept out of use.', { name: 'eqReturn', id: d.id, back: d.id },
+      `<div class="two"><label class="field">Quantity<input name="qty" type="number" min="1" value="1" required></label>
+        <label class="field">Condition<select name="condition"><option value="good">Good</option><option value="damaged">Damaged</option></select></label></div>
+       <label class="field">Reason<input name="reason" required minlength="3" maxlength="400"></label>`, 'Record return');
+  },
+  eqBackorder(d) {
+    formModal('Mark as backordered', 'The doctor and dean are told.', { name: 'eqBackorder', id: d.id, back: d.id },
+      '<label class="field">Reason<input name="reason" required minlength="3" maxlength="400"></label><label class="field">Expected date<input name="expected_date" type="date"></label>', 'Save');
+  },
+  eqCancel(d) {
+    formModal('Cancel this request?', 'Reserved stock is released and open supplier orders are cancelled. This cannot be undone.', { name: 'eqCancel', id: d.id, back: d.id },
+      '<label class="field">Reason<input name="reason" required minlength="3" maxlength="400"></label>', 'Cancel request', 'danger');
+  },
+  async eqService(d) {
+    const sup = (await api('/equipment/suppliers')).filter((s) => s.kind === 'service');
+    formModal('Schedule service', 'Opens a maintenance ticket linked to this request.', { name: 'eqService', id: d.id, back: d.id },
+      `<div class="two"><label class="field">Technician<input name="technician" maxlength="120"></label>
+        <label class="field">Service provider<input name="provider_name" list="svc-list" maxlength="120"><datalist id="svc-list">${sup.map((s) => `<option>${esc(s.name)}</option>`).join('')}</datalist></label></div>
+       <label class="field">Date<input name="scheduled_for" type="date"></label>`, 'Schedule');
+  },
+  async eqAttachment(d) {
+    const res = await fetch(`/api/equipment/requests/${d.id}/attachment`, { headers: { Authorization: `Bearer ${S.token}` } });
+    if (!res.ok) throw new Error('Attachment not found');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await res.blob());
+    link.download = d.name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+  },
+  async eqFault() {
+    let items = [];
+    if (isOps()) items = await api('/equipment/inventory');
+    openModal(`<h2>Report faulty or unsafe equipment</h2><p class="sub">Unsafe equipment is taken out of use straight away and only returns after a verified repair.</p>
+      <form class="form" data-form="eqFault"><input type="hidden" name="idem_key" value="${uid()}">
+        <div class="two"><label class="field">Asset tag (if it has one)<input name="asset_tag" maxlength="40" placeholder="e.g. CS-INF-004"></label>
+          ${items.length ? `<label class="field">Or stock item<select name="inventory_id"><option value="">Choose</option>${items.map((i) => `<option value="${i.id}">${esc(i.name)} · ${esc(i.code)}</option>`).join('')}</select></label>`
+          : '<label class="field">Equipment name<input name="item_name" maxlength="120" placeholder="If there is no tag"></label>'}</div>
+        <div class="two"><label class="field">Type<select name="kind"><option value="repair">Repair</option><option value="servicing">Servicing</option><option value="calibration">Calibration</option><option value="inspection">Inspection</option></select></label>
+          <label class="field">Quantity<input name="qty" type="number" min="1" max="1000" value="1"></label></div>
+        <label class="field">What is wrong<textarea name="issue" required minlength="5" maxlength="600"></textarea></label>
+        <label class="check-line"><input type="checkbox" name="unsafe" value="1"> It is unsafe for clinical use</label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary" type="submit">Report</button></div></form>`);
+  },
+  async mtManage(d) {
+    const sup = await api('/equipment/suppliers');
+    openModal(`<h2>Manage repair</h2><p class="sub">Each step is recorded. Equipment goes back into use only after verification.</p>
+      <form class="form" data-form="mtUpdate" data-id="${esc(d.id)}">
+        <label class="field">Step<select name="action"><option value="assign">Assign technician or provider</option><option value="schedule">Schedule</option><option value="start">Start work (mark unavailable)</option>
+          <option value="findings">Record findings, parts and cost</option><option value="complete">Repair finished, needs verification</option><option value="verify">Verified, restore to service</option><option value="cancel">Cancel ticket</option></select></label>
+        <div class="two"><label class="field">Technician<input name="technician" maxlength="120"></label>
+          <label class="field">Service provider<input name="provider_name" list="mt-sup" maxlength="120"><datalist id="mt-sup">${sup.map((s) => `<option>${esc(s.name)}</option>`).join('')}</datalist></label></div>
+        <div class="two"><label class="field">Date<input name="scheduled_for" type="date"></label><label class="field">Cost<input name="cost" type="number" min="0" step="0.01"></label></div>
+        <label class="field">Inspection findings<textarea name="findings" maxlength="600"></textarea></label>
+        <label class="field">Parts used<input name="parts_used" maxlength="300"></label>
+        <label class="field">Note (for verification: what was checked)<input name="note" maxlength="400"></label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary" type="submit">Save step</button></div></form>`);
+  },
+  async invOpen(d) {
+    const i = await api('/equipment/inventory/' + d.id);
+    openModal(`<div class="spread"><div><h2>${esc(i.name)} <span class="mono faint">${esc(i.code)}</span></h2><p class="sub" style="margin-bottom:10px">${esc(i.category)} · ${esc(i.model || 'model not set')} · ${esc(i.location)}</p></div>
+      <button class="icon-btn" data-act="close" aria-label="Close">${ic('x')}</button></div>
+      <div class="qty-grid">${[['Total', i.total], ['Available', i.available], ['Reserved', i.reserved], ['In service', i.in_service], ['Maintenance', i.maintenance], ['Damaged', i.damaged], ['Minimum', i.min_stock]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
+      <dl class="kv" style="margin:14px 0"><dt>Supplier</dt><dd>${esc(i.supplier || '–')}</dd><dt>Warranty</dt><dd>${esc(i.warranty || '–')}</dd>
+        <dt>Last service</dt><dd>${esc(i.last_maintenance || '–')}</dd><dt>Next service</dt><dd>${esc(i.next_maintenance || '–')}</dd><dt>Condition</dt><dd>${esc(i.condition)}</dd></dl>
+      ${isOps() ? `<form class="form" data-form="invAdjust" data-id="${i.id}"><div class="three"><label class="field">Stock change<select name="kind"><option value="receive">Receive new stock</option><option value="damage">Mark damaged</option><option value="repair">Send damaged for repair</option><option value="write_off">Write off damaged</option></select></label>
+          <label class="field">Quantity<input name="qty" type="number" min="1" value="1" required></label><label class="field">Reason<input name="note" required minlength="3" maxlength="300"></label></div>
+          ${i.tracking === 'asset' ? '<label class="field">Asset tags (needed when receiving tagged equipment)<input name="asset_tags" placeholder="CS-XXX-001, CS-XXX-002"></label>' : ''}
+          <div class="row"><button class="btn small primary" type="submit">Record stock change</button></div></form>
+        <form class="form" data-form="invEdit" data-id="${i.id}" style="margin-top:14px"><div class="three"><label class="field">Minimum stock<input name="min_stock" type="number" min="0" value="${i.min_stock}"></label>
+          <label class="field">Location<input name="location" maxlength="80" value="${esc(i.location)}"></label><label class="field">Next service<input name="next_maintenance" type="date" value="${esc(i.next_maintenance)}"></label></div>
+          <div class="row"><button class="btn small" type="submit">Save details</button></div></form>` : ''}
+      ${i.assets.length ? `<h3 class="sec">Tagged assets</h3><div class="scroll-x"><table><thead><tr><th>Asset tag</th><th>Serial</th><th>State</th><th>Department</th><th>Condition</th><th>Warranty until</th></tr></thead>
+        <tbody>${i.assets.map((a) => `<tr><td class="mono">${esc(a.asset_tag)}</td><td class="mono hint">${esc(a.serial)}</td><td>${esc(human(a.state))}${a.request ? ' <span class="hint">(request)</span>' : ''}</td><td>${esc(a.department || '–')}</td>
+          <td>${a.condition === 'unsafe' ? '<span class="pill bad">Unsafe</span>' : esc(a.condition)}</td><td class="hint">${esc(a.warranty_until || '–')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <h3 class="sec">Recent movements</h3><div class="scroll-x"><table><thead><tr><th>When</th><th>Movement</th><th class="num">Qty</th><th>From → to</th><th>By</th><th>Note</th></tr></thead>
+        <tbody>${i.transactions.map((t) => `<tr><td class="hint" style="white-space:nowrap">${fmtShort(t.at.slice(0, 10))} ${fmtTime(t.at)}</td><td>${esc(human(t.kind))}</td><td class="num">${t.qty}</td><td class="hint">${esc(human(t.from))} → ${esc(human(t.to))}</td><td>${esc(t.who)}</td><td class="hint">${esc(t.note)}</td></tr>`).join('')}</tbody></table></div>`, true);
+  },
+  async invNew() {
+    const cat = await catalog();
+    const opts = cat.sections.map((s) => `<optgroup label="${esc(s.section)}">${s.categories.flatMap((c) => c.items.map((i) => `<option value="${i.id}" data-name="${esc(i.name)}" data-cat="${esc(c.category)}" data-tracking="${i.tracking}">${esc(i.name)}</option>`)).join('')}</optgroup>`).join('');
+    openModal(`<h2>Add an inventory item</h2><p class="sub">Tagged equipment is tracked unit by unit; consumables by quantity.</p>
+      <form class="form" data-form="invNew"><label class="field">Catalogue item<select name="catalog_id">${opts}</select></label>
+        <div class="three"><label class="field">Model<input name="model" maxlength="80"></label><label class="field">Opening quantity<input name="initial_qty" type="number" min="0" value="0"></label>
+          <label class="field">Minimum stock<input name="min_stock" type="number" min="0" value="0"></label></div>
+        <div class="two"><label class="field">Location<input name="location" maxlength="80" value="Central stores"></label><label class="field">Next service<input name="next_maintenance" type="date"></label></div>
+        <label class="field">Asset tags for tagged equipment (one per unit, comma separated)<input name="asset_tags"></label>
+        <div class="modal-actions"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary" type="submit">Add item</button></div></form>`, true);
+  },
+});
+
+function fillCatalog(form, which) {
+  const cat = S.catalog;
+  const sectionName = form.section.value;
+  const other = sectionName === '__other';
+  $('[data-other]', form).hidden = !other;
+  form.category.closest('.two').hidden = other;
+  if (other) return;
+  const section = cat.sections.find((s) => s.section === sectionName);
+  if (which !== 'category') form.category.innerHTML = section.categories.map((c) => `<option>${esc(c.category)}</option>`).join('');
+  const category = section.categories.find((c) => c.category === form.category.value) || section.categories[0];
+  form.catalog_id.innerHTML = category.items.map((i) => `<option value="${i.id}">${esc(i.name)}${i.tracking === 'quantity' ? ' (consumable)' : ''}</option>`).join('');
+}
+document.addEventListener('change', (e) => {
+  const form = e.target.closest('form[data-form=eqNew]');
+  if (form && e.target.name === 'section') fillCatalog(form);
+  if (form && e.target.name === 'category') fillCatalog(form, 'category');
+  const f = e.target.dataset && e.target.dataset.f;
+  if (f && f !== 'q') {
+    S.eq[f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    S.eq.page = 1;
+    refreshEq();
+  }
+});
+let eqTyping;
+document.addEventListener('input', (e) => {
+  if (e.target.dataset && e.target.dataset.f === 'q') {
+    clearTimeout(eqTyping);
+    eqTyping = setTimeout(() => { S.eq.q = e.target.value; S.eq.page = 1; refreshEq().then(() => { const el = $('[data-f=q]'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }); }, 300);
+  }
+  if (e.target.matches && e.target.matches('[data-inv-q]')) {
+    clearTimeout(eqTyping);
+    eqTyping = setTimeout(() => { S.invQ = e.target.value; refreshLive('stores').then(() => { const el = $('[data-inv-q]'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }); }, 300);
+  }
+});
+/* Live regions skip refreshing while someone types in them; filters are part of the table, so allow it there. */
+
+const tagsOf = (s) => String(s || '').split(',').map((t) => t.trim()).filter(Boolean);
+async function eqAfter(message, requestId) {
+  toast(message);
+  await refreshEq();
+  if (requestId) await openRequest(requestId); else closeModal();
+}
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1]);
+    reader.onerror = () => reject(new Error('The file could not be read'));
+    reader.readAsDataURL(file);
+  });
+}
+
+Object.assign(FORMS, {
+  async eqNew(data, form) {
+    const body = { idem_key: data.idem_key, request_type: data.request_type, quantity: Number(data.quantity), urgency: data.urgency,
+      justification: data.justification, location: data.location };
+    if (data.section === '__other') Object.assign(body, { item_name: data.item_name, category: data.other_category });
+    else body.catalog_id = Number(data.catalog_id);
+    const file = form.file.files[0];
+    if (file) {
+      if (file.size > 3 * 1024 * 1024) throw new Error('Attachments can be up to 3 MB');
+      body.attachment = { name: file.name, data: await readFile(file) };
+    }
+    const out = await api('/equipment/requests', 'POST', body);
+    closeModal();
+    toast(`${out.request.ref} sent to the dean${out.duplicate ? ' (already sent)' : ''}`);
+    S.eqTab = 'mine';
+    await refreshEq();
+  },
+  async eqDecide(data, form) {
+    const body = { action: form.dataset.action, note: data.note || '' };
+    if (data.qty_approved) body.qty_approved = Number(data.qty_approved);
+    const r = await api(`/equipment/requests/${form.dataset.id}/decide`, 'POST', body);
+    await eqAfter(`${r.ref}: ${r.status_label}`, r.id);
+  },
+  async eqRespond(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/respond`, 'POST', { note: data.note, quantity: data.quantity ? Number(data.quantity) : null });
+    await eqAfter('Answer sent', r.id);
+  },
+  async eqAsk(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/clarify`, 'POST', { note: data.note });
+    await eqAfter('Question sent to the doctor', r.id);
+  },
+  async eqReserve(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/reserve`, 'POST', { inventory_id: Number(form.dataset.inv), qty: Number(data.qty), asset_tags: tagsOf(data.asset_tags) });
+    await eqAfter(`${data.qty} reserved for ${r.ref}`, r.id);
+  },
+  async eqSource(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/source`, 'POST', { ...data, qty: Number(data.qty) });
+    await eqAfter(`Order recorded with ${data.supplier_name}`, r.id);
+  },
+  async soArrive(data, form) {
+    const r = await api(`/equipment/sourcing/${form.dataset.id}/arrive`, 'POST', { qty: Number(data.qty), note: data.note });
+    await eqAfter('Arrival recorded. Inspect it next.', r.id);
+  },
+  async soInspect(data, form) {
+    const r = await api(`/equipment/sourcing/${form.dataset.id}/inspect`, 'POST', { accepted: Number(data.accepted), rejected: Number(data.rejected), note: data.note, asset_tags: tagsOf(data.asset_tags) });
+    await eqAfter('Inspection saved', r.id);
+  },
+  async soUpdate(data, form) {
+    const r = await api(`/equipment/sourcing/${form.dataset.id}/update`, 'POST', data);
+    await eqAfter('Order updated', r.id);
+  },
+  async eqDispatch(data, form) {
+    const out = await api(`/equipment/requests/${form.dataset.id}/dispatch`, 'POST', { idem_key: form.dataset.key, qty: Number(data.qty), destination: data.destination, handled_by: data.handled_by });
+    await eqAfter(out.duplicate ? 'Already dispatched' : `${data.qty} dispatched to ${data.destination}`, Number(form.dataset.id));
+  },
+  async eqConfirm(data, form) {
+    const r = await api(`/equipment/dispatches/${form.dataset.id}/confirm`, 'POST', { ...data, qty_delivered: Number(data.qty_delivered) });
+    await eqAfter(`Receipt confirmed: ${r.status_label}`, form.dataset.back ? r.id : null);
+  },
+  async eqRelease(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/release`, 'POST', { qty: Number(data.qty), reason: data.reason });
+    await eqAfter('Reservation released', r.id);
+  },
+  async eqReturn(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/return`, 'POST', { ...data, qty: Number(data.qty) });
+    await eqAfter('Return recorded', r.id);
+  },
+  async eqBackorder(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/backorder`, 'POST', data);
+    await eqAfter('Marked as backordered', r.id);
+  },
+  async eqCancel(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/cancel`, 'POST', data);
+    await eqAfter(`${r.ref} cancelled`, r.id);
+  },
+  async eqService(data, form) {
+    const r = await api(`/equipment/requests/${form.dataset.id}/schedule-service`, 'POST', { action: 'schedule', ...data });
+    await eqAfter('Service scheduled', r.id);
+  },
+  async eqFault(data) {
+    const t = await api('/equipment/maintenance', 'POST', { idem_key: data.idem_key, asset_tag: data.asset_tag || '', item_name: data.item_name || '',
+      inventory_id: data.inventory_id ? Number(data.inventory_id) : null, qty: Number(data.qty || 1), issue: data.issue, unsafe: data.unsafe === '1', kind: data.kind });
+    closeModal();
+    toast(`${t.ref} reported${t.unsafe ? '. It is marked unsafe and out of use.' : ''}`);
+    await refreshEq();
+  },
+  async mtUpdate(data, form) {
+    const body = { ...data, cost: data.cost === '' ? null : Number(data.cost) };
+    const t = await api(`/equipment/maintenance/${form.dataset.id}/update`, 'POST', body);
+    closeModal();
+    toast(`${t.ref}: ${t.status_label}`);
+    await refreshEq();
+  },
+  async invAdjust(data, form) {
+    await api(`/equipment/inventory/${form.dataset.id}/adjust`, 'POST', { kind: data.kind, qty: Number(data.qty), note: data.note, asset_tags: tagsOf(data.asset_tags) });
+    toast('Stock updated');
+    await refreshEq();
+    await ACT.invOpen({ id: form.dataset.id });
+  },
+  async invEdit(data, form) {
+    await api(`/equipment/inventory/${form.dataset.id}`, 'POST', { min_stock: Number(data.min_stock), location: data.location, next_maintenance: data.next_maintenance });
+    toast('Details saved');
+    await refreshEq();
+  },
+  async invNew(data, form) {
+    const opt = form.catalog_id.selectedOptions[0];
+    const i = await api('/equipment/inventory', 'POST', { catalog_id: Number(data.catalog_id), name: opt.dataset.name, category: opt.dataset.cat, tracking: opt.dataset.tracking,
+      model: data.model, initial_qty: Number(data.initial_qty), min_stock: Number(data.min_stock), location: data.location, next_maintenance: data.next_maintenance,
+      asset_tags: tagsOf(data.asset_tags), unit: opt.dataset.tracking === 'asset' ? 'unit' : 'pack' });
+    closeModal();
+    toast(`${i.code} added`);
+    await refreshEq();
+  },
+  async supplier(data, form) {
+    await api('/equipment/suppliers', 'POST', data);
+    form.reset();
+    toast('Supplier added');
+    await refreshLive('stores');
+  },
+});
+
 /* ---------- start ---------- */
-applyTheme(savedTheme());
+applyTheme(DEFAULT_THEME);
 
 async function boot() {
   if (!S.token) return renderLogin();
@@ -1347,10 +2479,13 @@ async function boot() {
   }
   S.user = S.meta.user;
   S.view = 'home';
+  applyTheme(savedTheme());
   renderShell();
   paint();
   refreshNotifs().catch(() => {});
+  refreshEmergency().catch(() => {});
   clearInterval(S.timer);
   S.timer = setInterval(tick, 6000);
+  startStream();
 }
 boot();
