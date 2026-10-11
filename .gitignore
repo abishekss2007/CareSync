@@ -14,3 +14,6 @@ cognos_data/
 static/styles.before-bronze.css
 static/styles.bronze.css
 static/styles.original-teal.css
+
+# files attached to equipment requests at runtime
+uploads/
