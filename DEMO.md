@@ -1,41 +1,48 @@
 # CareSync demo script (about 5 minutes)
 
+Live app: https://caresync-ecru.vercel.app (backup link: https://caresync-app-r083.onrender.com)
+
 ## Before you present
 
-1. Double-click `run.bat` and keep its window open.
-2. Open http://localhost:8000 in Chrome and pick your colour theme.
+1. Open the live app in Chrome about two minutes early. The free server sleeps when idle and takes up to a minute to wake.
+2. Pick your colour theme from the palette button in the top bar.
 3. Sign in as the chairman > **Admin and audit** > **Reset demo data**. This rebuilds the queue around the current time.
 4. In the same Chrome, sign in to IBM Cognos Analytics in another tab.
-5. Sign in to CareSync as the chairman again, open **Analytics**, scroll to the Cognos card and leave it loading. It can take over a minute the first time.
-6. Open four more CareSync tabs and sign in as: **Ravi Kumar** (receptionist), **Deepa Krishnan** (nurse, Orthopedics), **Dr. Kavya Iyer** (Orthopedics), **Dr. Arjun Menon** (Cardiology). Each tab keeps its own login.
-7. Check the internet connection. The watsonx.ai summary and Cognos both need it.
+5. Back in CareSync as the chairman, open **Analytics**, scroll to the Cognos card and leave it loading. It can take over a minute the first time.
+6. Open five more CareSync tabs and sign in as: **Ravi Kumar** (receptionist), **Dr. Kavya Iyer** (Orthopedics), **Dr. Arjun Menon** (Cardiology), **Dr. Meera Nair** (dean), **Thomas Abraham** (coordinator). Each tab keeps its own login.
+7. Check the internet connection and turn the sound on. The emergency banner plays an alert tone.
 
 ## The story
 
-One patient, two departments, no paper.
+One patient, two departments, no paper. Then an emergency arrives, and the ward gets the equipment it asked for.
 
 | Time | Tab | Do | Say |
 |---|---|---|---|
 | 0:00 | Sign-in page | Show the page | "Patients carry files between departments and wait at each one. CareSync gives every department one live record." |
-| 0:30 | Receptionist | Register a new patient. Show the ID and PIN pop-up. Click **Issue a token now**, choose Orthopedics, issue it. | "Reception creates the patient once. The ID is generated, and the patient gets a token with a wait estimate." |
-| 1:15 | Nurse | Click **Record vitals** on that patient, enter values, save. | "The nurse sees only her own department's queue." |
-| 1:45 | Dr. Kavya | **Call next patient**. Enter a diagnosis and one medicine. Set **Refer to another department** to Cardiology with a reason. Save. | "The doctor closes the visit and refers the patient. No letter, no file." |
-| 2:30 | Dr. Arjun | Show the referred patient in the queue, tagged "From Orthopedics". Call them. Point at the history: vitals, diagnosis, medicines from Orthopedics. Click **Summarise history**. | "The cardiologist already has everything. This summary is written by IBM watsonx.ai from the record." |
-| 3:15 | Nurse, then Dr. Kavya | Nurse: **Requests** > **New request** to Dr. Kavya. Doctor: **Approvals** > **Send to dean**. | "Requests go up the chain: nurse, doctor, dean. Each step notifies the next person and is logged." |
-| 3:45 | Chairman | **Overview**: KPIs and department load. **Analytics**: scroll to the embedded Cognos dashboard, click a tab in it. | "Leadership sees the whole hospital. This dashboard is IBM Cognos Analytics, built from the app's own visit data." |
-| 4:30 | Chairman | **Admin and audit**: show the audit trail, including the record views from a minute ago. | "Every record opened is logged. Access is checked on the server for each role." |
-| 4:50 | Any | Sign in as a patient (last entries in the demo list). | "The patient sees only their own token, wait time, doctors and beds." |
+| 0:20 | Receptionist | Register a new patient. Show the ID and PIN pop-up. Click **Issue a token now**, choose Orthopedics, issue it. | "Reception creates the patient once. The ID is generated, and the patient gets a token with a wait estimate." |
+| 0:50 | Dr. Kavya | **Call next patient**. Enter a diagnosis and one medicine. Set **Refer to another department** to Cardiology with a reason. Save. | "The doctor closes the visit and refers the patient. No letter, no file." |
+| 1:30 | Dr. Arjun | Show the referred patient in the queue, tagged "From Orthopedics". Call them. Point at the history from Orthopedics. Click **Summarise history**. | "The cardiologist already has everything. This summary is written by IBM watsonx.ai from the record." |
+| 2:10 | Receptionist | Click **Critical Emergency Alert**. Pick a patient, type "Chest pain / cardiac", team Cardiology, assign Dr. Arjun Menon. Send. | "A critical patient arrives. One form alerts the emergency team, the assigned doctor, the dean, the chairman and the administrator at once." |
+| 2:40 | Dr. Arjun | Switch to his tab without touching it: the red banner is already there, on top of the open consultation. Click **Acknowledge emergency**. | "The doctor is interrupted wherever he is, and his open consultation is kept. If nobody acknowledges in time, the alert escalates on its own." |
+| 3:00 | Dean | Show the alert strip now reading "Acknowledged". Open **Equipment requests**, open the urgent infusion pump request, **Approve** > **Approve and forward**. | "Leadership sees the response in real time. The same dean approves equipment requests from doctors." |
+| 3:30 | Coordinator | **Stores and dispatch**: open an approved request, **Reserve stock**, then **Dispatch**. | "Stores reserve tagged units, dispatch them to the ward and track delivery. Nothing is requested on paper or lost in a phone call." |
+| 4:00 | Chairman | **Overview**: KPIs and department load. **Analytics**: scroll to the embedded Cognos dashboard, click a tab in it. | "Leadership sees the whole hospital. This dashboard is IBM Cognos Analytics, reading the app's data live." |
+| 4:40 | Chairman | **Admin and audit**: show the audit trail, including the record views from a minute ago. | "Every record opened is logged. Access is checked on the server for each role." |
 
 ## If something goes wrong
 
-- **Cognos card still spinning:** click **Open in Cognos** on that card. It opens the same dashboard in a new tab.
+- **Page is slow to open or sign-in fails at first:** the server was asleep. Wait a minute and reload.
+- **Cognos card is blank or spinning:** you are not signed in to Cognos in this browser. Sign in, or click **Open in Cognos** on that card.
 - **Summarise history is slow or fails:** the app falls back to a rule-based summary and labels it. Say so and move on.
-- **Queue looks empty or times look odd:** reset the demo data (step 3) and sign in again.
-- **Page will not load:** the server window was closed. Run `run.bat` again.
+- **Emergency alert says one is already open for that patient:** duplicates are blocked on purpose. Pick another patient.
+- **Queue looks empty or times look odd:** reset the demo data (step 3) and sign in again. The data also rebuilds itself at midnight.
+- **The Vercel link fails:** use the backup link above, which is the same app served directly.
 
 ## Be ready to answer
 
 - **Is this real patient data?** No. All of it is synthetic, generated by `app/seed.py`.
-- **Which IBM services are live?** watsonx.ai (history summary) and Cognos Analytics (dashboard). Db2 is supported in the code but not connected; the app uses a local database file.
-- **Is it deployed?** No, it runs on this laptop. Hosting on IBM Cloud is the next step.
-- **How are roles enforced?** On the server, per request. `tests/smoke.py` checks 52 access rules and workflows.
+- **Which IBM services are live?** watsonx.ai (history summary and department suggestion) and Cognos Analytics (dashboard). Db2 is supported in the code but not connected.
+- **Where does Cognos get its data?** The app pushes de-identified reporting tables to a cloud PostgreSQL database every 15 seconds, and Cognos queries that.
+- **Is it deployed?** Yes. The front end is on Vercel and the app server is on Render; every push to GitHub runs the tests and redeploys both. The same container also runs on IBM Cloud Code Engine.
+- **How are roles enforced?** On the server, per request. Two test suites check the access rules and every workflow on each push.
+- **What happens if the doctor ignores the alert?** A background watchdog escalates it to more staff and records each step in the alert's trail.
