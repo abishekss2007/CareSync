@@ -115,7 +115,7 @@ Arrows show who reports to whom. That hierarchy decides who approves requests, w
 | Own record and token | ✓ | | | | | | | |
 | Book appointments | ✓ | | | | | | | |
 | Register patients, issue tokens | | ✓ | | | | | | |
-| Raise a Critical Emergency Alert | | ✓ | ✓ | ✓ | | | | |
+| Raise a Critical Emergency Alert | | ✓ | ✓ | ✓ | | | ✓ | ✓ |
 | Clinical history | | | ✓ | ✓ | | | ✓ | ✓ |
 | Consult, prescribe, refer | | | | ✓ | | | | |
 | Request equipment | | | | ✓ | | | | |
