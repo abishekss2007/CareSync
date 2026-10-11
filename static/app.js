@@ -146,7 +146,7 @@ async function renderLogin() {
   root.innerHTML = `
   <div class="login">
     <section class="hero">
-      <div class="brand"><span class="brand-mark">${ic('pulse')}</span>CareSync</div>
+      <div class="brand"><span class="brand-mark"><img src="/static/logo-mark.png" alt=""></span>CareSync</div>
       <h1>One hospital.<br><em>One patient record.</em><br>No waiting on paper.</h1>
       <p>Every department works from the same live record, so a patient only ever needs their name or ID.</p>
       <ul class="hero-points">
@@ -214,7 +214,7 @@ function renderShell() {
   root.innerHTML = `
   <div class="shell">
     <aside class="side glass">
-      <div class="brand"><span class="brand-mark">${ic('pulse')}</span>CareSync</div>
+      <div class="brand"><span class="brand-mark"><img src="/static/logo-mark.png" alt=""></span>CareSync</div>
       <nav class="nav" id="nav"></nav>
       <div class="side-foot">${avatar(u.name, u.role)}<div><b>${esc(u.name)}</b><small>${esc(u.role)}${u.department ? ' · ' + esc(u.department) : ''}</small></div>
         <button class="foot-btn" data-act="myPassword" title="Change my password" aria-label="Change my password">${ic('key')}</button></div>
