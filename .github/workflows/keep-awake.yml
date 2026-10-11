@@ -1,0 +1,19 @@
+name: Keep demo awake
+
+# The hosted demo runs on a free plan that sleeps after 15 idle minutes.
+# This pings it every 10 minutes between 07:30 and 00:30 India time so it answers at once during judging.
+# To stop it, disable this workflow under the repository's Actions tab.
+on:
+  schedule:
+    - cron: "*/10 2-18 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    name: Ping the demo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request the sign-in page
+        run: curl --silent --show-error --fail --retry 5 --retry-delay 20 --retry-all-errors --max-time 90 --output /dev/null https://caresync-app-r083.onrender.com/
