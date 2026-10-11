@@ -4,7 +4,7 @@
 
 One hospital app with a separate workspace for each role. Every department works from the same patient record, so a patient only needs their name or patient ID, and nobody carries paper between departments.
 
-**Live demo:** https://caresync-app-r083.onrender.com (free hosting, so the first visit after a quiet spell takes about a minute to wake up).
+**Live demo:** https://caresync-ecru.vercel.app (front end on Vercel) or https://caresync-app-r083.onrender.com (full app on Render; free hosting, so the first visit after a quiet spell takes about a minute to wake up).
 
 Built for an IBM hackathon. It uses **IBM watsonx.ai** for clinical summaries and front-desk routing, and **IBM Cognos Analytics** for leadership dashboards that read the app's data live.
 
@@ -470,6 +470,8 @@ flowchart LR
     GH --> CI["GitHub Actions<br/>lint, tests, container"]
     GH -- "auto-deploy on push" --> RN["Render web service<br/>pip install, uvicorn"]
     RN --> APP["caresync-app-r083.onrender.com"]
+    GH -- "auto-deploy on push" --> VC["Vercel<br/>static front end"]
+    VC -- "forwards /api to" --> APP
     APP -- "summaries" --> WX["IBM watsonx.ai"]
     APP -- "reporting tables" --> PG[("Supabase PostgreSQL")]
     COG["IBM Cognos Analytics"] -- "live queries" --> PG
