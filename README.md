@@ -103,6 +103,8 @@ Arrows show who reports to whom. That hierarchy decides who approves requests, w
 | Manage staff accounts | | | | | ✓ | ✓ |
 | Audit trail and settings | | | | | | ✓ |
 
+Two more staff roles support emergencies and equipment. The **Hospital Administrator** (`admin`) sees operations, emergency status (patient details restricted to the patient ID), the procurement overview and can run the stores view. The **Equipment Coordinator / Stores Manager** (`coordinator`) runs inventory, sourcing, dispatch and maintenance. Emergency alerts can be raised by reception and clinical staff; equipment requests are raised by doctors and approved by the dean.
+
 ## Main flows
 
 ### One patient, two departments, no paper
@@ -315,6 +317,7 @@ Copy `.env.example` to `.env`. Everything is optional; with no `.env` the app ru
 | `ANALYTICS_DATABASE_URL` | Cloud PostgreSQL that Cognos reads |
 | `ANALYTICS_SYNC_SECONDS` | How often the sync checks for changes (default 15) |
 | `COGNOS_DASHBOARD_URL` | Embed link of the Cognos dashboard |
+| `LIVE_CHECK_SECONDS` | How often the watchdog checks emergency escalation, alert retries and equipment reminders (default 10) |
 
 `.env` is ignored by git. Never commit it.
 
@@ -328,6 +331,8 @@ python tests/smoke.py
 ```
 
 Run it against freshly seeded data; it creates accounts and bookings, so a second run on the same database fails.
+
+`tests/workflows.py` checks the emergency workflow (duplicate prevention, delivery and acknowledgement tracked separately, escalation, restricted details, status order) and the equipment workflow (approval, stock checks, concurrent reservations, partial fulfilment, returns, unsafe maintenance). Start the server with `LIVE_CHECK_SECONDS=2` on a fresh database, then run `python tests/workflows.py`.
 
 ```mermaid
 flowchart LR
@@ -355,9 +360,14 @@ app/
   ai.py              watsonx.ai calls and rule-based fallbacks
   reporting.py       de-identified reporting tables
   analytics_sync.py  live copy to the analytics database
+  emergency.py       critical emergency alerts, escalation and audit
+  equipment.py       equipment requests, stores, sourcing, dispatch, maintenance
+  catalog.py         equipment catalogue by section and category
+  live.py            live update stream and background watchdog
 static/
   index.html, app.js, styles.css   the single-page front end
 tests/smoke.py       end-to-end checks
+tests/workflows.py   emergency and equipment workflow checks
 DEMO.md              demo script
 Dockerfile           container image
 ```

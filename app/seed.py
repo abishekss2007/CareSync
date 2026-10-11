@@ -5,7 +5,10 @@ import os
 import random
 import secrets
 
-from .db import (Appointment, Bed, Message, Patient, Prescription, Request, RequestEvent, Setting, Task, User,
+from .catalog import ensure_catalog
+from .db import (Appointment, Bed, Dispatch, EmergencyAlert, EmergencyEvent, EquipmentAsset, EquipmentCatalogItem,
+                 EquipmentEvent, EquipmentRequest, InventoryItem, MaintenanceEvent, MaintenanceTicket, Message, Patient,
+                 Prescription, Request, RequestEvent, Setting, SourcingOrder, StockTransaction, Supplier, Task, User,
                  Visit, now)
 
 # Demo accounts all share this password. Change it with DEMO_PASSWORD in .env.
@@ -32,6 +35,11 @@ STAFF = [
     ("nurse.latha", "Latha Suresh", "nurse", "General Medicine"),
     ("reception.ravi", "Ravi Kumar", "receptionist", None),
     ("reception.divya", "Divya Raj", "receptionist", None),
+]
+# Added with the emergency and equipment modules; also added to older demo databases without rebuilding them.
+EXTRA_STAFF = [
+    ("admin", "Sandhya Varghese", "admin", None),
+    ("stores.thomas", "Thomas Abraham", "coordinator", None),
 ]
 
 FIRST = ["Arun", "Lakshmi", "Karthik", "Fathima", "Suresh", "Anjali", "Mohan", "Revathi", "Imran", "Sneha",
@@ -238,4 +246,188 @@ def seed(db):
         db.add(Appointment(patient_id=patient.id, department=dept, day=today.date().isoformat(),
                            slot=upcoming[min(n, len(upcoming) - 1)], reason=reason))
     db.add(Setting(key="cognos_url", value=os.environ.get("COGNOS_DASHBOARD_URL", "")))
+    db.commit()
+    seed_extras(db)
+
+
+# (catalogue name, model, location, min stock, [available, reserved, in service, maintenance, damaged], tag prefix)
+STOCK = [
+    ("Multiparameter patient monitor", "Mindray uMEC 12", "Biomedical store", 2, [3, 0, 9, 1, 0], "MON"),
+    ("ICU ventilator", "Hamilton C3", "Biomedical store", 1, [1, 0, 5, 0, 0], "VEN"),
+    ("Infusion pump", "B. Braun Infusomat", "Biomedical store", 3, [4, 0, 10, 1, 0], "INF"),
+    ("Syringe pump", "B. Braun Perfusor", "Biomedical store", 2, [3, 0, 6, 0, 0], "SYR"),
+    ("Defibrillator", "Philips HeartStart XL+", "Biomedical store", 1, [2, 0, 4, 0, 0], "DEF"),
+    ("Portable suction unit", "Laerdal LCSU 4", "Central stores", 2, [1, 0, 3, 0, 0], "SUC"),
+    ("Wheelchair", "Karma KM-2500", "Central stores", 4, [6, 0, 14, 0, 1], "WCH"),
+    ("Stretcher trolley", "Hydraulic, 5-function", "Central stores", 2, [3, 0, 8, 0, 0], "STR"),
+    ("Hospital bed", "Semi-Fowler, manual", "Central stores", 2, [3, 0, 0, 0, 0], "BED"),
+    ("Stethoscope", "Littmann Classic III", "Central stores", 5, [12, 0, 0, 0, 0], "STH"),
+    ("BP apparatus", "Omron HBP-1320", "Central stores", 4, [6, 0, 0, 0, 0], "BPA"),
+    ("Pulse oximeter", "Masimo MightySat", "Central stores", 4, [7, 0, 0, 0, 0], "POX"),
+    ("ECG machine", "BPL Cardiart 9108", "Biomedical store", 1, [1, 0, 3, 0, 0], "ECG"),
+    ("Surgical scissors", "Mayo, 17 cm", "Central sterile supply", 10, [24, 0, 0, 0, 0], "SCI"),
+    ("Portable oxygen cylinder and regulator", "D-type with regulator", "Gas store", 4, [8, 0, 6, 0, 0], "OXY"),
+    ("Surgical gloves", "Sterile, size 7, box of 50", "Central stores", 80, [240, 0, 0, 0, 0], None),
+    ("Face masks", "3-ply, box of 50", "Central stores", 80, [55, 0, 0, 0, 0], None),
+    ("Syringes and needles", "5 ml, box of 100", "Central stores", 40, [120, 0, 0, 0, 0], None),
+    ("IV cannulas", "20G, box of 50", "Central stores", 30, [26, 0, 0, 0, 0], None),
+    ("Gauze and bandages", "Sterile gauze, pack of 100", "Central stores", 30, [90, 0, 0, 0, 0], None),
+    ("Bed linen", "Sheet set", "Linen store", 100, [320, 0, 0, 0, 0], None),
+    ("Sharps containers", "5 litre", "Central stores", 20, [44, 0, 0, 0, 0], None),
+    ("Colour-coded biomedical waste bins and bags", "Bag roll, 50", "Central stores", 30, [70, 0, 0, 0, 0], None),
+]
+SUPPLIERS = [("MedEquip Distributors", "supplier", "Anil Joseph", "0484 2400 110"),
+             ("Kerala Surgicals", "supplier", "Reena Paul", "0484 2311 202"),
+             ("BioCare Service Engineers", "service", "Vinod Menon", "0484 2650 330"),
+             ("Southern Medical Gases", "supplier", "Hari Prasad", "0484 2209 404")]
+
+
+def seed_extras(db):
+    """Administrator and coordinator accounts, stock, suppliers and sample equipment and emergency records."""
+    ensure_catalog(db)
+    users = {u.username: u for u in db.query(User).all()}
+    for username, name, role, dept in EXTRA_STAFF:
+        if username not in users:
+            users[username] = make_user(username, DEMO_PASSWORD, name, role, dept)
+            db.add(users[username])
+    db.flush()
+    if db.query(InventoryItem).count():
+        db.commit()
+        return
+    u = users
+    rnd = random.Random(11)
+    current = now()
+    suppliers = {}
+    for name, kind, contact, phone in SUPPLIERS:
+        suppliers[name] = Supplier(name=name, kind=kind, contact=contact, phone=phone)
+        db.add(suppliers[name])
+    db.flush()
+    catalog = {c.name: c for c in db.query(EquipmentCatalogItem).all()}
+    items = {}
+    depts = list(DEPT_CODE)
+    for name, model, location, min_stock, counts, prefix in STOCK:
+        c = catalog[name]
+        avail, res, used, maint, dmg = counts
+        nxt = (current.date() + dt.timedelta(days=rnd.randint(2, 150))).isoformat() if c.needs_service else ""
+        i = InventoryItem(code="", catalog_id=c.id, name=name, category=c.category, model=model, tracking=c.tracking,
+                          unit=c.unit, total=sum(counts), available=avail, reserved=res, in_service=used,
+                          maintenance=maint, damaged=dmg, min_stock=min_stock, location=location,
+                          supplier_id=suppliers["MedEquip Distributors" if c.tracking == "asset" else "Kerala Surgicals"].id,
+                          warranty="3 years from purchase" if c.tracking == "asset" else "",
+                          last_maintenance=(current.date() - dt.timedelta(days=rnd.randint(20, 170))).isoformat() if nxt else "",
+                          next_maintenance=nxt, low_notified=avail < min_stock)
+        db.add(i)
+        db.flush()
+        i.code = f"INV-{i.id:04d}"
+        items[name] = i
+        if prefix:
+            n = 0
+            for state, k in zip(("available", "reserved", "in_service", "maintenance", "damaged"), counts):
+                for _ in range(k):
+                    n += 1
+                    db.add(EquipmentAsset(inventory_id=i.id, asset_tag=f"CS-{prefix}-{n:03d}", serial=f"SN{rnd.randint(100000, 999999)}",
+                                          state=state, department=rnd.choice(depts) if state == "in_service" else "",
+                                          condition="damaged" if state == "damaged" else "good",
+                                          warranty_until=(current.date() + dt.timedelta(days=rnd.randint(60, 900))).isoformat(),
+                                          next_maintenance=nxt))
+        db.add(StockTransaction(inventory_id=i.id, kind="receive", qty=i.total, from_state="outside", to_state="available",
+                                user_id=u["stores.thomas"].id, note="Opening stock", at=current - dt.timedelta(days=30)))
+    db.flush()
+
+    def request(n, who, name, qty, urgency, why, rtype="new", hours=3, **kw):
+        doc = u[who]
+        c = catalog[name]
+        r = EquipmentRequest(ref=f"EQ-{current.year}-{n:04d}", idem_key=f"seed-{n}-{secrets.token_hex(6)}",
+                             created_by=doc.id, department=doc.department, location=kw.pop("location", doc.department + " ward"),
+                             catalog_id=c.id, item_name=name, category=c.category, request_type=rtype, quantity=qty,
+                             urgency=urgency, justification=why, created_at=current - dt.timedelta(hours=hours),
+                             updated_at=current - dt.timedelta(hours=hours), **kw)
+        db.add(r)
+        db.flush()
+        db.add(EquipmentEvent(request_id=r.id, user_id=doc.id, action="created", to_status="pending_dean", qty=qty,
+                              note=f"{qty} x {name}", at=r.created_at))
+        return r
+
+    def event(r, who, action, frm, to, note="", qty=None, hours=1):
+        db.add(EquipmentEvent(request_id=r.id, user_id=u[who].id if who else None, action=action, from_status=frm,
+                              to_status=to, qty=qty, note=note, at=current - dt.timedelta(hours=hours)))
+
+    request(1, "dr.arjun", "Infusion pump", 2, "urgent",
+            "Two post-angioplasty patients need continuous heparin infusion tonight; the ward has one free pump.", hours=2)
+    request(2, "dr.sana", "EEG machine", 1, "routine",
+            "Annual calibration is due and the trace shows baseline drift on two channels.", "servicing", hours=20)
+    r3 = request(3, "dr.vikram", "Pediatric cot", 2, "routine", "Winter admissions are rising in the pediatric ward.",
+                 hours=30, dean_status="clarification", status="clarification", clarification_from=u["dean"].id)
+    event(r3, "dean", "clarification requested", "pending_dean", "clarification",
+          "How many cots are out of service now, and can the two in the store room be repaired instead?", hours=26)
+    r4 = request(4, "dr.kavya", "Wheelchair", 3, "routine", "Outpatient knee and hip patients wait for wheelchairs at the entrance.",
+                 hours=28, dean_status="approved", status="approved", qty_approved=3, decided_by=u["dean"].id,
+                 decision_note="Approved.")
+    event(r4, "dean", "approved", "pending_dean", "approved", "Approved.", 3, hours=24)
+    r5 = request(5, "dr.joseph", "Portable suction unit", 2, "critical",
+                 "Only one working suction unit in the emergency bays; trauma cases need one per bay.", hours=72,
+                 dean_status="approved", status="sourcing", qty_approved=2, qty_sourced=2, decided_by=u["dean"].id,
+                 procurement_status="sourcing", supplier_id=suppliers["MedEquip Distributors"].id,
+                 expected_date=(current.date() - dt.timedelta(days=1)).isoformat(), location="Emergency bays")
+    event(r5, "dean", "approved", "pending_dean", "approved", "Approved, urgent.", 2, hours=70)
+    event(r5, "stores.thomas", "stock checked", "approved", "sourcing_required", "1 available, 2 needed", hours=69)
+    event(r5, "stores.thomas", "sourcing", "sourcing_required", "sourcing", "2 from MedEquip Distributors, ref PO-2210", 2, hours=68)
+    db.add(SourcingOrder(request_id=r5.id, supplier_id=suppliers["MedEquip Distributors"].id, reference="PO-2210",
+                         qty_ordered=2, expected_date=r5.expected_date, created_by=u["stores.thomas"].id,
+                         created_at=current - dt.timedelta(hours=68)))
+    masks = items["Face masks"]
+    r6 = request(6, "dr.rahul", "Face masks", 50, "urgent", "Fever clinic volumes doubled this week.", "consumable", hours=50,
+                 dean_status="approved", status="partially_fulfilled", qty_approved=50, qty_dispatched=30,
+                 qty_delivered=30, decided_by=u["dean"].id, inventory_id=masks.id, procurement_status="stock_checked",
+                 dispatch_status="partially_delivered")
+    event(r6, "dean", "approved", "pending_dean", "approved", "Approved.", 50, hours=48)
+    event(r6, "stores.thomas", "dispatched", "approved", "dispatched", "30 to General Medicine OPD, carried by Ajith", 30, hours=40)
+    event(r6, "dr.rahul", "delivery confirmed", "dispatched", "partially_fulfilled", "30 of 30 received by Latha Suresh", 30, hours=39)
+    db.add(Dispatch(idem_key=f"seed-d-{secrets.token_hex(6)}", request_id=r6.id, inventory_id=masks.id, qty=30,
+                    destination="General Medicine OPD", handled_by="Ajith (stores porter)", dispatched_by=u["stores.thomas"].id,
+                    dispatched_at=current - dt.timedelta(hours=40), status="delivered", qty_delivered=30,
+                    received_by="Latha Suresh", confirmed_by=u["dr.rahul"].id, delivered_at=current - dt.timedelta(hours=39)))
+    db.add(StockTransaction(inventory_id=masks.id, request_id=r6.id, kind="dispatch", qty=30, from_state="reserved",
+                            to_state="outside", user_id=u["stores.thomas"].id, note="To General Medicine OPD",
+                            at=current - dt.timedelta(hours=40)))
+
+    pump = items["Infusion pump"]
+    broken = db.query(EquipmentAsset).filter(EquipmentAsset.inventory_id == pump.id, EquipmentAsset.state == "maintenance").first()
+    broken.condition, broken.department = "unsafe", "Cardiology"
+    t = MaintenanceTicket(ref=f"MT-{current.year}-0001", idem_key=f"seed-m-{secrets.token_hex(6)}", inventory_id=pump.id,
+                          asset_id=broken.id, item_name=pump.name, qty=1, qty_held=1, held_from="in_service",
+                          department="Cardiology", reported_by=u["nurse.priya"].id,
+                          issue="Occlusion alarm fails to trigger during the pre-use check.", unsafe=True, status="assigned",
+                          technician="Vinod Menon", supplier_id=suppliers["BioCare Service Engineers"].id,
+                          created_at=current - dt.timedelta(hours=9), updated_at=current - dt.timedelta(hours=6))
+    db.add(t)
+    db.flush()
+    db.add_all([MaintenanceEvent(ticket_id=t.id, user_id=u["nurse.priya"].id, action="reported",
+                                 note="UNSAFE. " + t.issue, at=t.created_at),
+                MaintenanceEvent(ticket_id=t.id, user_id=u["stores.thomas"].id, action="assign",
+                                 note="Assigned to Vinod Menon, BioCare Service Engineers", at=t.updated_at)])
+
+    # One closed emergency from yesterday, for the alert history and acknowledgement report.
+    patient = db.query(Patient).order_by(Patient.id).offset(12).first()
+    created = (current - dt.timedelta(days=1)).replace(hour=15, minute=10)
+    a = EmergencyAlert(ern=f"ER-{created.year}-0001", idem_key=f"seed-e-{secrets.token_hex(6)}", patient_id=patient.id,
+                       emergency_type="Road traffic accident", description="Two-wheeler collision, head and left arm injury, conscious.",
+                       priority="critical", triage_level="Level 2 - Emergent", location="Emergency bay 2", team="Emergency",
+                       assigned_doctor_id=u["dr.joseph"].id, status="closed", arrival_at=created - dt.timedelta(minutes=2),
+                       created_by=u["reception.ravi"].id, created_at=created, received_at=created + dt.timedelta(seconds=20),
+                       acknowledged_at=created + dt.timedelta(seconds=75), acknowledged_by=u["dr.joseph"].id,
+                       updated_at=created + dt.timedelta(hours=2), closed_at=created + dt.timedelta(hours=2))
+    db.add(a)
+    db.flush()
+    steps = [(0, "reception.ravi", "created", "", "alert_created", "critical · Road traffic accident"),
+             (0, None, "status", "alert_created", "notification_sent", "Saved notifications for the alert recipients"),
+             (75, "dr.joseph", "status", "notification_sent", "acknowledged", ""),
+             (240, "dr.joseph", "status", "acknowledged", "response_started", "In bay 2"),
+             (600, "dr.joseph", "triage", "critical", "critical / Level 2 - Emergent", "Stable airway, GCS 14"),
+             (900, "dr.joseph", "status", "response_started", "under_care", ""),
+             (5400, "dr.joseph", "status", "under_care", "admitted", "Admitted to General A for observation"),
+             (7200, "dr.joseph", "status", "admitted", "closed", "Handed over to the ward team")]
+    for secs, who, action, frm, to, note in steps:
+        db.add(EmergencyEvent(alert_id=a.id, user_id=u[who].id if who else None, action=action, from_value=frm,
+                              to_value=to, note=note, at=created + dt.timedelta(seconds=secs)))
     db.commit()

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 
 from . import ai, analytics_sync, reporting
+from .catalog import ensure_catalog
 from .db import (ROOT, Appointment, AuditLog, Base, Bed, Message, Notification, Patient, Prescription, Request,
                  RequestEvent, SessionLocal, Setting, Task, User, Visit, engine, get_db, migrate, now)
 from .db import Session as AuthSession
@@ -23,11 +24,13 @@ from .seed import DEPARTMENTS, DEPT_CODE, SLOTS, hash_password, make_pid, make_u
 
 DEMO_MODE = os.environ.get("DEMO_MODE", "1") == "1"
 SESSION_HOURS = 12
-STAFF = {"chairman", "dean", "doctor", "nurse", "receptionist"}
+STAFF = {"chairman", "dean", "doctor", "nurse", "receptionist", "admin", "coordinator"}
 CLINICAL = {"chairman", "dean", "doctor", "nurse"}
 LEADERS = {"chairman", "dean"}
-RANK = {"chairman": 5, "dean": 4, "doctor": 3, "nurse": 2, "receptionist": 2, "patient": 0}
-NEXT_LEVEL = {"nurse": "doctor", "receptionist": "dean", "doctor": "dean", "dean": "chairman"}
+RANK = {"chairman": 5, "dean": 4, "admin": 4, "doctor": 3, "nurse": 2, "receptionist": 2, "coordinator": 2, "patient": 0}
+NEXT_LEVEL = {"nurse": "doctor", "receptionist": "dean", "doctor": "dean", "dean": "chairman", "admin": "chairman",
+              "coordinator": "dean"}
+PRIORITY_RANK = {"critical": 0, "urgent": 1, "normal": 2}
 REQUEST_KINDS = ["Supplies", "Equipment", "Shift change", "Leave", "Patient transfer", "Other"]
 
 
@@ -36,10 +39,32 @@ def today_start():
 
 
 def rebuild_demo():
+    """Rebuild the sample data. Settings such as the Cognos dashboard link are kept."""
+    kept = {}
+    try:
+        with SessionLocal() as db:
+            kept = {row.key: row.value for row in db.scalars(select(Setting)) if row.value}
+    except Exception:  # first run: the tables do not exist yet
+        pass
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         seed(db)
+        for key, value in kept.items():
+            row = db.get(Setting, key)
+            if row:
+                row.value = value
+            else:
+                db.add(Setting(key=key, value=value))
+        db.commit()
+
+
+def add_demo_extras(db):
+    """Demo databases made before the administrator, coordinator and equipment data existed get them added.
+    Nothing is dropped or rebuilt."""
+    from .seed import seed_extras
+    if not db.scalar(select(User).where(User.role == "coordinator")):
+        seed_extras(db)
 
 
 def refresh_demo_if_stale():
@@ -57,8 +82,14 @@ async def lifespan(_app):
     Base.metadata.create_all(engine)
     migrate()
     refresh_demo_if_stale()
+    with SessionLocal() as db:
+        ensure_catalog(db)
+        if DEMO_MODE:
+            add_demo_extras(db)
     analytics_sync.start()
+    live.start_watchdog()
     yield
+    live.stop_watchdog()
     analytics_sync.stop()
 
 
@@ -109,9 +140,16 @@ def uname(db, user_id):
     return u.name if u else ""
 
 
-def notify(db, user_ids, text, view=""):
-    for uid in set(user_ids):
-        db.add(Notification(user_id=uid, text=text[:300], view=view))
+def bump(db, *keys):
+    """Wake the live streams of these users (ids) or topics ("emergency", "equipment") once this commit lands."""
+    db.info.setdefault("bump", set()).update(keys)
+
+
+def notify(db, user_ids, text, view="", kind="", ref=""):
+    ids = {uid for uid in user_ids if uid}
+    for uid in ids:
+        db.add(Notification(user_id=uid, text=text[:300], view=view, kind=kind, ref=str(ref)[:40]))
+    bump(db, *ids)
 
 
 def role_ids(db, role, department=None):
@@ -168,7 +206,7 @@ def demo_accounts():
 
 def _demo_accounts(db):
     users = db.scalars(select(User).where(User.active == True).order_by(User.id)).all()  # noqa: E712
-    order = ["chairman", "dean", "doctor", "nurse", "receptionist", "patient"]
+    order = ["chairman", "dean", "admin", "doctor", "nurse", "receptionist", "coordinator", "patient"]
     users.sort(key=lambda u: (order.index(u.role), u.id))
     return [{"username": u.username, "name": u.name, "role": u.role, "department": u.department} for u in users]
 
@@ -219,7 +257,7 @@ def change_password(body: PasswordIn, db=Depends(get_db), user=Depends(current_u
 @app.get("/api/me")
 def me(user=Depends(current_user)):
     return {"user": user_out(user), "departments": DEPARTMENTS, "request_kinds": REQUEST_KINDS,
-            "watsonx": ai.configured(), "demo": DEMO_MODE}
+            "watsonx": ai.configured(), "demo": DEMO_MODE, "clinical": user.role in CLINICAL}
 
 
 # ---------- live hospital state ----------
@@ -229,6 +267,7 @@ def live_state(db):
     active = db.scalars(select(Visit).where(Visit.checkin_at >= start,
                                             Visit.status.in_(["waiting", "in_consultation"]))
                         .order_by(Visit.checkin_at, Visit.id)).all()
+    active.sort(key=queue_key)  # clinical priority first, then arrival; the stored records are not changed
     doctors = db.scalars(select(User).where(User.role == "doctor").order_by(User.name)).all()
     rows = db.execute(select(Visit.department, Visit.start_at, Visit.end_at)
                       .where(Visit.status == "done", Visit.checkin_at >= start - dt.timedelta(days=14))).all()
@@ -247,9 +286,13 @@ def estimate(state, dept, ahead):
     return math.ceil((ahead + 0.5 * busy) * state["avg"][dept] / docs)
 
 
+def queue_key(v):
+    return (PRIORITY_RANK.get(v.priority or "normal", 2), v.checkin_at, v.id)
+
+
 def ahead_of(state, visit):
     return sum(1 for v in state["active"] if v.department == visit.department and v.status == "waiting"
-               and (v.checkin_at, v.id) < (visit.checkin_at, visit.id))
+               and queue_key(v) < queue_key(visit))
 
 
 @app.get("/api/status")
@@ -285,7 +328,7 @@ def visit_out(db, v, clinical=True, patient=None):
     out = {"id": v.id, "token": v.token, "department": v.department, "status": v.status,
            "checkin_at": iso(v.checkin_at), "start_at": iso(v.start_at), "end_at": iso(v.end_at),
            "doctor": uname(db, v.doctor_id), "doctor_id": v.doctor_id, "referred_from": v.referred_from,
-           "complaint": v.complaint,
+           "complaint": v.complaint, "priority": v.priority or "normal",
            "patient": {"pid": p.pid, "name": p.name, "age": p.age, "gender": p.gender, "allergies": p.allergies}}
     if clinical:
         meds = db.scalars(select(Prescription).where(Prescription.visit_id == v.id).order_by(Prescription.id)).all()
@@ -385,12 +428,13 @@ class VisitIn(BaseModel):
     pid: str = Field(max_length=20)
     department: str
     complaint: str = Field(default="", max_length=240)
+    priority: str = "normal"
 
 
-def new_visit(db, patient, department, complaint, referred_from="", referred_by=None):
+def new_visit(db, patient, department, complaint, referred_from="", referred_by=None, priority="normal"):
     count = db.scalar(select(func.count()).select_from(Visit)
                       .where(Visit.department == department, Visit.checkin_at >= today_start()))
-    v = Visit(patient_id=patient.id, department=department, complaint=complaint,
+    v = Visit(patient_id=patient.id, department=department, complaint=complaint, priority=priority,
               token=f"{DEPT_CODE[department]}-{count + 1:03d}", referred_from=referred_from, referred_by=referred_by)
     db.add(v)
     db.flush()
@@ -407,17 +451,22 @@ def active_visit(db, patient, department):
 def issue_token(body: VisitIn, db=Depends(get_db), user=Depends(require("receptionist"))):
     if body.department not in DEPARTMENTS:
         raise HTTPException(400, "Unknown department")
+    if body.priority == "critical":
+        raise HTTPException(400, "Use Critical Emergency Alert for a critical patient, so the emergency team is alerted")
+    if body.priority not in ("normal", "urgent"):
+        raise HTTPException(400, "Unknown priority")
     p = find_patient(db, body.pid)
     if active_visit(db, p, body.department):
         raise HTTPException(409, f"{p.name} already has an active token in {body.department}")
-    v = new_visit(db, p, body.department, body.complaint.strip())
+    v = new_visit(db, p, body.department, body.complaint.strip(), priority=body.priority)
     state = live_state(db)
     ahead = ahead_of(state, v)
+    urgent = "URGENT patient" if body.priority == "urgent" else "New patient"
     notify(db, role_ids(db, "doctor", body.department) + role_ids(db, "nurse", body.department),
-           f"New patient in queue: {p.name} ({v.token})", "home")
-    audit(db, user, "issued token", f"{v.token} for {p.pid}")
+           f"{urgent} in queue: {p.name} ({v.token})", "home")
+    audit(db, user, "issued token", f"{v.token} for {p.pid}" + (" (urgent)" if body.priority == "urgent" else ""))
     db.commit()
-    return {"token": v.token, "department": v.department, "ahead": ahead,
+    return {"token": v.token, "department": v.department, "ahead": ahead, "priority": v.priority,
             "est_wait": estimate(state, v.department, ahead), "patient": patient_out(p)}
 
 
@@ -498,7 +547,24 @@ def start_visit(visit_id: int, db=Depends(get_db), user=Depends(require("doctor"
 @app.get("/api/visits/{visit_id}")
 def get_visit(visit_id: int, db=Depends(get_db), user=Depends(require("doctor"))):
     v = own_visit(db, visit_id, user)
-    return visit_out(db, v, True)
+    out = visit_out(db, v, True)
+    out["draft"] = v.draft if v.doctor_id == user.id else ""
+    return out
+
+
+class DraftIn(BaseModel):
+    draft: str = Field(default="", max_length=8000)
+
+
+@app.post("/api/visits/{visit_id}/draft")
+def save_draft(visit_id: int, body: DraftIn, db=Depends(get_db), user=Depends(require("doctor"))):
+    """Keep what the doctor has typed so far, e.g. before they step away for an emergency. The visit stays open."""
+    v = own_visit(db, visit_id, user)
+    if v.status != "in_consultation" or v.doctor_id != user.id:
+        raise HTTPException(409, "This consultation is not open in your room")
+    v.draft = body.draft
+    db.commit()
+    return {"ok": True, "saved_at": iso(now())}
 
 
 class MedIn(BaseModel):
@@ -528,6 +594,7 @@ def complete_visit(visit_id: int, body: CompleteIn, db=Depends(get_db), user=Dep
         if active_visit(db, p, body.refer_to):
             raise HTTPException(409, f"{p.name} is already in the {body.refer_to} queue")
     v.status, v.end_at, v.diagnosis, v.notes = "done", now(), body.diagnosis.strip(), body.notes.strip()
+    v.draft = ""
     for m in body.prescriptions:
         db.add(Prescription(visit_id=v.id, patient_id=p.id, doctor_id=user.id, medicine=m.medicine.strip(),
                             dosage=m.dosage.strip(), duration=m.duration.strip()))
@@ -961,7 +1028,7 @@ def notifications(db=Depends(get_db), user=Depends(current_user)):
     unread = db.scalar(select(func.count()).select_from(Notification)
                        .where(Notification.user_id == user.id, Notification.is_read == False))  # noqa: E712
     return {"unread": unread, "items": [{"id": n.id, "text": n.text, "view": n.view, "read": n.is_read,
-                                         "at": iso(n.created_at)} for n in rows]}
+                                         "kind": n.kind, "ref": n.ref, "at": iso(n.created_at)} for n in rows]}
 
 
 @app.post("/api/notifications/read")
@@ -982,6 +1049,8 @@ def badges(db=Depends(get_db), user=Depends(staff_only)):
                           or_(Request.approver_id.is_(None), Request.approver_id == user.id)),
         "messages": count(Message, Message.to_id == user.id, Message.is_read == False),  # noqa: E712
         "tasks": count(Task, Task.assigned_to == user.id, Task.status != "done"),
+        "emergency": emergency.badge(db, user),
+        "equipment": equipment.badge(db, user),
     }
 
 
@@ -1103,7 +1172,8 @@ def audit_log(db=Depends(get_db), _=Depends(require("chairman"))):
 
 # ---------- staff accounts ----------
 
-MANAGES = {"chairman": ["dean", "doctor", "nurse", "receptionist"], "dean": ["doctor", "nurse", "receptionist"]}
+MANAGES = {"chairman": ["dean", "admin", "doctor", "nurse", "receptionist", "coordinator"],
+           "dean": ["doctor", "nurse", "receptionist", "coordinator"]}
 USERNAME_OK = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
 
 
@@ -1184,6 +1254,15 @@ def reset_staff_password(user_id: int, db=Depends(get_db), me=Depends(require(*L
     audit(db, me, "reset staff password", target.username)
     db.commit()
     return {"user": {**user_out(target), "username": target.username}, "password": password}
+
+
+# ---------- emergencies, equipment, live updates ----------
+
+from . import emergency, equipment, live  # noqa: E402  (these modules use the helpers defined above)
+
+app.include_router(emergency.router)
+app.include_router(equipment.router)
+app.include_router(live.router)
 
 
 # ---------- front end ----------
